@@ -7,7 +7,6 @@
 #include "../App.h"
 #include "../Util.h"
 #include "../Lang.h"
-#include "CapLong.h"
 #include "../Tool/ToolCap.h"
 using namespace Microsoft::WRL;
 
@@ -29,8 +28,6 @@ WinCap::WinCap() : Ling::WinBase()
     onMouseMove.add([this](POINT pos) { this->onMove(pos); });
     onMouseUp.add([this](POINT pos, bool isRight) { this->onUp(pos, isRight); });
     onKeyDown.add([this](UINT key) { this->onKey(key); });
-    // 滚动截图的定时器借的是本窗口的，转给 CapLong
-    onTimer.add([this](UINT id) { if (capLong) capLong->onTimerCB(id); });
     onDestroy.add([this]() { this->onClosed(); });
     // DPI 变了（用户改了缩放比例）：系统会按新旧缩放比把窗口整体缩放一圈，但本窗口是铺满整个
     // 虚拟桌面的，缩放之后就盖不住桌面了，而且底图、选区（cutMask->maskRect）用的都是物理像素，
@@ -99,11 +96,8 @@ void WinCap::layout()
     if (!ctx) return;
     ctx->Clear(0);
     D2D1_RECT_F destRect = D2D1::RectF(0, 0, (float)w, (float)h);
-    if (!hideScreenImg) {
-        ctx->DrawBitmap(screenImg.Get(), destRect);
-    }
+    ctx->DrawBitmap(screenImg.Get(), destRect);
     cutMask->paint(ctx);
-    if (capLong) capLong->paint(ctx);
     paintPix(ctx);
     canvas->finishPaint();
 }
@@ -112,10 +106,6 @@ BOOL WinCap::setCursor()
 {
     if (stage == CapStage::Select) {
         SetCursor(LoadCursor(nullptr, IDC_CROSS));
-        return TRUE;
-    }
-    if (stage == CapStage::Long && capLong) {
-        capLong->setCursor();
         return TRUE;
     }
     if (stage == CapStage::Adjust) {
@@ -195,7 +185,9 @@ void WinCap::getPixImg(POINT pos)
 void WinCap::paintPix(ID2D1DeviceContext* ctx)
 {
 	if (isPress || stage != CapStage::Select) return;
-    D2D1_RECT_F pixRect{ (float)pixPos.x, (float)pixPos.y, pixPos.x + pixW, pixPos.y + pixImgH + 76.f * dpi };
+    // 底框只留两行文字的高度：padding*(2+1) + fontSize*2，再加一点余量，
+    // 与下面画的两行（HEX / RGB）对齐
+    D2D1_RECT_F pixRect{ (float)pixPos.x, (float)pixPos.y, pixPos.x + pixW, pixPos.y + pixImgH + 42.f * dpi };
     ctx->FillRectangle(pixRect, brushBg.Get());
     if (pixSrcRect.right > pixSrcRect.left && pixSrcRect.bottom > pixSrcRect.top) {
         D2D1_RECT_F imgRect{
@@ -227,22 +219,15 @@ void WinCap::paintPix(ID2D1DeviceContext* ctx)
     auto d2d = Ling::D2D::get();
     float padding{ 7.f * dpi },fontSize{ 10.f*dpi };
     Microsoft::WRL::ComPtr<IDWriteTextLayout> textLayout;
-    for (size_t i = 0; i < 4; i++)
+    // 只画 HEX 与 RGB 两行。CMYK 与光标坐标（POS）去掉了：
+    // 取色的时候用不上，多出来的两行还把取景框撑得很高
+    const std::wstring lines[] = {
+        std::format(L"HEX (Ctrl+H) : #{:02X}{:02X}{:02X}", GetRValue(cr), GetGValue(cr), GetBValue(cr)),
+        std::format(L"RGB (Ctrl+R) : {},{},{}", GetRValue(cr), GetGValue(cr), GetBValue(cr)),
+    };
+    for (size_t i = 0; i < 2; i++)
     {
-        std::wstring str;
-        if (i == 0) {
-            str = std::format(L"HEX (Ctrl+H) : #{:02X}{:02X}{:02X}", GetRValue(cr), GetGValue(cr), GetBValue(cr));
-		}
-		else if (i == 1) {
-			str = std::format(L"RGB (Ctrl+R) : {},{},{}", GetRValue(cr), GetGValue(cr), GetBValue(cr));
-		}
-        else if (i == 2) {
-            auto [c, m, y1, k] = getCMYK(GetRValue(cr), GetGValue(cr), GetBValue(cr));
-            str = std::format(L"CMYK (Ctrl+K) : {},{},{},{}", c, m, y1,k);
-        }
-        else if (i == 3) {
-            str = std::format(L"POS (Ctrl+P) : X:{} Y:{}", pos.x, pos.y);
-        }
+        auto& str = lines[i];
         d2d->dwriteFactory->CreateTextLayout(str.data(), (UINT32)str.length(), d2d->baseTextFormat.Get(), FLT_MAX, FLT_MAX, &textLayout);
         textLayout->SetFontSize(fontSize, { 0,INT_MAX });
         ctx->DrawTextLayout({ pixPos.x + padding, pixPos.y + pixImgH + padding*(i+1) + fontSize*i }, textLayout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
@@ -276,30 +261,6 @@ void WinCap::onKey(UINT key)
         Ling::Util::setTextToClipboard(std::format(L"rgb({},{},{})", r, g, b));
         close();
     }
-    else if (key == 'K' && (GetKeyState(VK_CONTROL) & 0x8000)) {
-        auto cr = func();
-        BYTE r = GetRValue(cr), g = GetGValue(cr), b = GetBValue(cr);
-        auto [c, m, y1, k] = getCMYK(r, g, b);
-        Ling::Util::setTextToClipboard(std::format(L"cmyk({},{},{},{})", c, m, y1, k));
-        close();
-    }
-    else if (key == 'P' && (GetKeyState(VK_CONTROL) & 0x8000)) {
-        POINT pos;
-        GetCursorPos(&pos);
-        Ling::Util::setTextToClipboard(std::format(L"{},{}", pos.x, pos.y));
-        close();
-    }
-    // 长图阶段：Ctrl+S 存文件，Ctrl+C 存剪切板，等价于工具条上的那两个按钮。
-    // 这个阶段里键盘消息进的往往是工具条，ToolLong 会把 onKeyDown 转回这里
-    else if ((key == 'S' || key == 'C') && (GetKeyState(VK_CONTROL) & 0x8000)) {
-        const bool toClipboard{ key == 'C' };
-        if (stage == CapStage::Long && capLong && capLong->hasImage()) {
-            // 与 ToolLong::onClick 同一套规则：存盘被取消了就留在原地，图还没丢
-            if (toClipboard) longCopyToClipboard();
-            else if (!longSaveToFile()) return;
-            close();
-        }
-    }
     else if (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT) {
         POINT pos;
         GetCursorPos(&pos);
@@ -322,26 +283,8 @@ void WinCap::copyCurrentStage()
         // 选区里的像素，与在窗口里双击同一条路（见 onDown）。它自己会关窗
         copyToClipboard();
     }
-    else if (stage == CapStage::Long && capLong && capLong->hasImage()) {
-        // 还没点"开始"滚动时一张图都没有（hasImage），此时不该收工
-        longCopyToClipboard();
-        close();
-    }
 }
 
-std::tuple<int, int, int, int> WinCap::getCMYK(const BYTE& r, const BYTE& g, const BYTE& b)
-{
-    double R = r / 255.0, G = g / 255.0, B = b / 255.0;
-    double K = 1.0 - (std::max)(R, (std::max)(G, B));
-    double C = (K == 1.0) ? 0.0 : (1.0 - R - K) / (1.0 - K);
-    double M = (K == 1.0) ? 0.0 : (1.0 - G - K) / (1.0 - K);
-    double Y = (K == 1.0) ? 0.0 : (1.0 - B - K) / (1.0 - K);
-    return std::make_tuple(static_cast<int>(std::round(C * 100)),
-        static_cast<int>(std::round(M * 100)),
-        static_cast<int>(std::round(Y * 100)),
-        static_cast<int>(std::round(K * 100))
-    );
-}
 ComPtr<ID2D1Bitmap1> WinCap::getCutImg()
 {
     ComPtr<ID2D1Bitmap1> cutImg;
@@ -360,9 +303,9 @@ ComPtr<ID2D1Bitmap1> WinCap::getCutImg()
     return cutImg;
 }
 
-LRESULT WinCap::onHitTest(const POINT pos)
+// 整窗都是客户区。原先长截图 / 录屏期间要把鼠标让给底下的窗口，现在没有这两种阶段了
+LRESULT WinCap::onHitTest(const POINT)
 {
-    if (isMouseTransparent) return HTTRANSPARENT;
     return HTCLIENT;
 }
 
@@ -416,12 +359,9 @@ void WinCap::onMove(POINT pos)
         // 选区变了，工具条跟着走位
         layoutTool(toolCap.get());
     }
-    else if (stage == CapStage::Long && capLong) {
-        capLong->onMove(pos);
-    }
 }
 
-void WinCap::onUp(POINT pos, bool isRight)
+void WinCap::onUp(POINT, bool)
 {
     if (stage == CapStage::Select) {
         isPress = false;
@@ -442,23 +382,19 @@ void WinCap::onUp(POINT pos, bool isRight)
     else if (stage == CapStage::Adjust) {
         isPress = false;
     }
-    else if (stage == CapStage::Long && capLong) {
-        capLong->onUp(pos);
-    }
 }
 
-// close() 里 DestroyWindow 之后同步触发 onDestroy，而这条路径通常是从某个工具条的按钮
-// 回调里一路进来的（工具条是 WinCap / CapLong / CapVideo 的成员）。在这里直接
+// close() 里 DestroyWindow 之后同步触发 onDestroy，而这条路径通常是从工具条的按钮
+// 回调里一路进来的（工具条是 WinCap 的成员）。在这里直接
 // winCap.reset() 就是 use-after-free，所以窗口句柄立即销毁，C++ 对象的释放推迟到下一轮消息循环。
 void WinCap::onClosed()
 {
     if (isClosed) return;
     isClosed = true;
-    if (capLong) capLong->dispose();
     if (toolCap) toolCap->close();
     Ling::App::get()->dq.TryEnqueue([]() {
         winCap.reset();
-        // 用完即走：截图窗口关掉就退进程。但图像标记、钉图、长截图这几条路是先建好
+        // 用完即走：截图窗口关掉就退进程。但图像标记、钉图这两条路是先建好
         // 贴图窗口再关自己的，那会儿活还没干完，退出的活交给最后一个关掉的贴图窗口
         const bool hasPin = WinPin::hasWindow();
         Util::log(std::format(L"cap: 遮罩已关，贴图窗口存在={} -> {}", hasPin, hasPin ? L"继续等待" : L"退出进程"));
@@ -494,8 +430,7 @@ bool WinCap::enterByArg()
     // 下面这几条路本来都是从 ToolCap 的按钮进的，start* 会检查选区是不是已经定下来了
     stage = CapStage::Adjust;
     refresh();      //收掉放大镜：这几条路都是马上要换阶段或者弹窗，屏幕上不能留着它
-    if (val == L"long") startLong();
-    else if (val == L"ocr") startOcr();
+    if (val == L"ocr") startOcr();
     else if (val == L"table") startTableOcr();
     else if (val == L"pin") startPin();          // 图像标记，等于替用户按住了 Ctrl 框选
     else if (val == L"pinonly") startPinPure();  // 钉图，不带工具条
@@ -507,8 +442,7 @@ bool WinCap::enterByArg()
 
 void WinCap::relayoutTool()
 {
-    if (capLong) capLong->layoutTool();
-    else if (toolCap) layoutTool(toolCap.get());
+    if (toolCap) layoutTool(toolCap.get());
 }
 
 void WinCap::layoutTool(Ling::WinBase* tool)
@@ -558,21 +492,6 @@ void WinCap::layoutTool(Ling::WinBase* tool)
     tool->setPosition(toolX, toolY);
 }
 
-void WinCap::enterLiveStage()
-{
-    // 底图是拖框那一刻的静态截图，从这里开始不能再画它 ——
-    // 否则录屏和滚动截图从屏幕上拿到的都是这张死图。只留遮罩，选区内是透明的洞。
-    hideScreenImg = true;
-    // 尺寸标签放不下时会折回选区内部（全屏必然如此），那就会被录进去 / 滚进长图。
-    // 选区这时已经定死了，标签也没什么可看的，直接不画 —— 这样选区内就真的什么都不画了，
-    // 不必再拿 WDA_EXCLUDEFROMCAPTURE 去摘整块屏幕大小的宿主窗口
-    cutMask->hideLabel = true;
-    if (toolCap) toolCap->hide();
-    // 原来的 WinLong / WinVideo 建窗口时就是 topmost，这里补上
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    refresh();
-}
-
 void WinCap::startPin()
 {
     if (!cutMask->hasRect()) return;
@@ -597,74 +516,6 @@ void WinCap::startPinPure()
     WinPin::init(px, py, pw, ph, true);
     Util::log(std::format(L"pin: 贴图窗口已建 hasWindow={}", WinPin::hasWindow()));
     close();
-}
-
-void WinCap::startLong()
-{
-    if (stage != CapStage::Adjust || !cutMask->hasRect()) return;
-    stage = CapStage::Long;
-    enterLiveStage();
-    // 选区已经定了，接下来光标移进选区会出现"开始"按钮，点一下才真的开始滚
-    capLong = std::make_unique<CapLong>(this);
-}
-
-void WinCap::layoutLongTool()
-{
-    if (capLong) capLong->layoutTool();
-}
-
-void WinCap::longPin()
-{
-    if (capLong) capLong->pin();
-}
-
-bool WinCap::longSaveToFile()
-{
-    return capLong ? capLong->saveToFile() : false;
-}
-
-void WinCap::longCopyToClipboard()
-{
-    if (capLong) capLong->copyToClipboard();
-}
-
-void WinCap::hollowWin()
-{
-    HRGN rgn1 = CreateRectRgn(0, 0, (int)w, (int)h);
-    auto& r = cutMask->maskRect;
-    HRGN rgn2 = CreateRectRgn((int)r.left, (int)r.top, (int)r.right, (int)r.bottom);
-    CombineRgn(rgn1, rgn1, rgn2, RGN_DIFF);
-    DeleteObject(rgn2);
-    if (SetWindowRgn(hwnd, rgn1, TRUE) == 0) {
-        DeleteObject(rgn1);
-    }
-}
-
-void WinCap::restoreWin()
-{
-    SetWindowRgn(hwnd, NULL, TRUE);
-}
-
-void WinCap::setMouseTransparent(bool transparent)
-{
-    isMouseTransparent = transparent;
-    if (!hwnd) return;
-    LONG_PTR exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-    if (transparent) {
-        exStyle |= WS_EX_LAYERED;
-        exStyle |= WS_EX_TRANSPARENT;
-        if (GetCapture() == hwnd) {
-            ReleaseCapture();
-        }
-        isPress = false;
-        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-    }
-    else {
-        exStyle &= ~WS_EX_TRANSPARENT;
-        exStyle &= ~WS_EX_LAYERED;
-    }
-    SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
-    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
 // 文字识别由外部插件进程来做，这边只负责把选区里的像素递过去

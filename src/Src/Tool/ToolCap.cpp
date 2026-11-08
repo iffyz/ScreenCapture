@@ -76,9 +76,6 @@ void ToolCap::onClick(Ling::Button* btn)
 	if (btn->id == L"mark") {
 		win->startPin();
 	}
-	else if (btn->id == L"long") {
-		win->startLong();
-	}
 	else if (btn->id == L"ocr") {
 		win->startOcr();
 	}

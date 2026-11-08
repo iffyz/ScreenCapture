@@ -181,13 +181,11 @@
     <ClCompile Include="Shape\ShapeRect.cpp" />
     <ClCompile Include="Shape\ShapeText.cpp" />
     <ClCompile Include="Tool\ToolCap.cpp" />
-    <ClCompile Include="Tool\ToolLong.cpp" />
     <ClCompile Include="Tool\ToolSub.cpp" />
     <ClCompile Include="Tool\ToolMain.cpp" />
     <ClCompile Include="Tip.cpp" />
     <ClCompile Include="Util.cpp" />
     <ClCompile Include="Win\CutMask.cpp" />
-    <ClCompile Include="Win\CapLong.cpp" />
     <ClCompile Include="Win\WinPin.cpp" />
     <ClCompile Include="Win\WinCap.cpp" />
   </ItemGroup>
@@ -213,13 +211,11 @@
     <ClInclude Include="Shape\ShapeRect.h" />
     <ClInclude Include="Shape\ShapeText.h" />
     <ClInclude Include="Tool\ToolCap.h" />
-    <ClInclude Include="Tool\ToolLong.h" />
     <ClInclude Include="Tool\ToolSub.h" />
     <ClInclude Include="Tool\ToolMain.h" />
     <ClInclude Include="Tip.h" />
     <ClInclude Include="Util.h" />
     <ClInclude Include="Win\CutMask.h" />
-    <ClInclude Include="Win\CapLong.h" />
     <ClInclude Include="Win\WinPin.h" />
     <ClInclude Include="Win\WinCap.h" />
   </ItemGroup>

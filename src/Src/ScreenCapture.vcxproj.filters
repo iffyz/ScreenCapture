@@ -93,12 +93,6 @@
     <ClCompile Include="Tool\ToolCap.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="Tool\ToolLong.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="Tool\ToolVideo.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="Update.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -127,12 +121,6 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Win\CutMask.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="Win\CapLong.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="Win\CapVideo.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
@@ -222,12 +210,6 @@
     <ClInclude Include="Tool\ToolCap.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="Tool\ToolLong.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Tool\ToolVideo.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="Update.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -247,12 +229,6 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Win\CutMask.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Win\CapLong.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Win\CapVideo.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Win\VideoGif.hpp">
