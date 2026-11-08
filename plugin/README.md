@@ -58,7 +58,7 @@ New-Item -ItemType HardLink -Path TableOCR.exe -Target ImageReader.exe
   "secret_key": "...",
   "region": "ap-guangzhou",
 
-  "text_action": "GeneralBasicOCR",
+  "text_action": "GeneralAccurateOCR",
   "table_action": "RecognizeTableAccurateOCR",
 
   "min_confidence": 0,
@@ -74,11 +74,15 @@ New-Item -ItemType HardLink -Path TableOCR.exe -Target ImageReader.exe
 }
 ```
 
+配置文件**编码不限**：UTF-8、UTF-8 BOM、UTF-16 LE/BE（带 BOM）都能读。Windows 自带的
+PowerShell 5.1 用 `Out-File` / `Set-Content` 存文件默认就是 UTF-16 LE，直接拿去用不会报错。
+布尔值推荐写 `true` / `false`，写成 `"true"` / `"1"` 这类字符串也认。
+
 ### 文字识别
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| `text_action` | `GeneralBasicOCR` | 通用文字识别接口 |
+| `text_action` | `GeneralAccurateOCR` | 高精度版，字小/排版密的界面文字明显更准。想省钱改 `GeneralBasicOCR`（快速版）；两个都是改配置即可，不用重编译 |
 | `min_confidence` | `0` | 置信度低于此值的行丢弃 |
 | `line_separator` | `\r\n` | 行与行之间用什么连接；想连成一句就填 `" "` |
 | `sort_by_position` | `false` | 按坐标重排（12px 内视为同一行）。接口默认顺序通常够用 |

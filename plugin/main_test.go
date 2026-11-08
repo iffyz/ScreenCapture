@@ -1,9 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 // resetCfg 每个用例都从默认配置开始，避免互相污染。
@@ -357,8 +360,77 @@ func TestDefaultConfigSane(t *testing.T) {
 	if c.CellBreakReplacement != "" {
 		t.Errorf("默认替换为空串，实际 %q", c.CellBreakReplacement)
 	}
-	if c.TextAction != "GeneralBasicOCR" || c.TableAction != "RecognizeTableAccurateOCR" {
+	if c.TextAction != "GeneralAccurateOCR" || c.TableAction != "RecognizeTableAccurateOCR" {
 		t.Errorf("默认 action 不对: %q / %q", c.TextAction, c.TableAction)
+	}
+}
+
+// ---------------------------------------------------------------- 配置文件容错
+
+// PowerShell 5.1 的 Out-File / Set-Content 默认写 UTF-16 LE + BOM，直接喂给
+// encoding/json 会报 "invalid character '\xff'"。这个用例就是那次线上事故的复现。
+func TestApplyConfigUTF16LE(t *testing.T) {
+	resetCfg(t)
+	body := `{"secret_id":"id123","secret_key":"key456","region":"ap-beijing"}`
+	u := utf16.Encode([]rune(body))
+	raw := []byte{0xFF, 0xFE} // UTF-16 LE BOM
+	for _, v := range u {
+		raw = append(raw, byte(v), byte(v>>8))
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !applyConfigFile(path) {
+		t.Fatal("UTF-16 的 config.json 应该能读")
+	}
+	if cfg.SecretID != "id123" || cfg.SecretKey != "key456" || cfg.Region != "ap-beijing" {
+		t.Errorf("没读进来: %q / %q / %q", cfg.SecretID, cfg.SecretKey, cfg.Region)
+	}
+}
+
+func TestApplyConfigUTF16BEBOM(t *testing.T) {
+	resetCfg(t)
+	body := `{"secret_id":"be","secret_key":"k"}`
+	u := utf16.Encode([]rune(body))
+	raw := []byte{0xFE, 0xFF} // UTF-16 BE BOM
+	for _, v := range u {
+		raw = append(raw, byte(v>>8), byte(v))
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, raw, 0o644)
+	if !applyConfigFile(path) {
+		t.Fatal("UTF-16 BE 应该能读")
+	}
+	if cfg.SecretID != "be" {
+		t.Errorf("没读进来: %q", cfg.SecretID)
+	}
+}
+
+// 手写的配置里布尔值/数字经常带引号。以前会整份解析失败，界面上只报"没配置密钥"。
+func TestApplyConfigQuotedScalars(t *testing.T) {
+	resetCfg(t)
+	body := `{"secret_id":"i","secret_key":"k","min_confidence":"0.6",` +
+		`"sort_by_position":"False","strip_cell_breaks":"false","show_error":"0","log":"1"}`
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, []byte(body), 0o644)
+	if !applyConfigFile(path) {
+		t.Fatal("字符串型布尔/数字应该能读")
+	}
+	if cfg.MinConfidence != 0.6 {
+		t.Errorf("min_confidence 解析错: %v", cfg.MinConfidence)
+	}
+	if cfg.SortByPosition {
+		t.Error(`"False" 应解析成 false`)
+	}
+	if cfg.StripCellBreaks {
+		t.Error(`"false" 应解析成 false`)
+	}
+	if cfg.ShowError {
+		t.Error(`"0" 应解析成 false`)
+	}
+	if !cfg.Log {
+		t.Error(`"1" 应解析成 true`)
 	}
 }
 

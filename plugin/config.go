@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 const (
@@ -20,7 +22,10 @@ const (
 	// 必须带横线。写成 20181119 会返回 InvalidAction
 	apiVersion = "2018-11-19"
 
-	defaultTextAction  = "GeneralBasicOCR"
+	// 高精度版：字小、排版密的界面文字明显比基础版准，代价是单价高、单图限制更严
+	//（base64 后同样 7 MB）。想换回便宜的基础版，在 config.json 里写
+	// "text_action": "GeneralBasicOCR" 即可，不用重新编译
+	defaultTextAction  = "GeneralAccurateOCR"
 	defaultTableAction = "RecognizeTableAccurateOCR"
 
 	// 接口限制：图片 base64 编码后不超过 7 MB
@@ -62,19 +67,84 @@ type fileConfig struct {
 	SecretKey string `json:"secret_key"`
 	Region    string `json:"region"`
 
-	TextAction     string   `json:"text_action"`
-	MinConfidence  *float64 `json:"min_confidence"`
-	LineSeparator  *string  `json:"line_separator"`
-	SortByPosition *bool    `json:"sort_by_position"`
+	TextAction     string     `json:"text_action"`
+	MinConfidence  *flexFloat `json:"min_confidence"`
+	LineSeparator  *string    `json:"line_separator"`
+	SortByPosition *flexBool  `json:"sort_by_position"`
 
-	TableAction          string  `json:"table_action"`
-	Action               string  `json:"action"` // 旧版 TableOCR 的字段名，兼容
-	StripCellBreaks      *bool   `json:"strip_cell_breaks"`
-	CellBreakReplacement *string `json:"cell_break_replacement"`
+	TableAction          string    `json:"table_action"`
+	Action               string    `json:"action"` // 旧版 TableOCR 的字段名，兼容
+	StripCellBreaks      *flexBool `json:"strip_cell_breaks"`
+	CellBreakReplacement *string   `json:"cell_break_replacement"`
 
-	ShowError *bool `json:"show_error"`
-	Toast     *bool `json:"toast"`
-	Log       *bool `json:"log"`
+	ShowError *flexBool `json:"show_error"`
+	Toast     *flexBool `json:"toast"`
+	Log       *flexBool `json:"log"`
+}
+
+// flexBool / flexFloat 是"容忍写法"的标量。config.json 大多是手写、或被 PowerShell、
+// AHK 这类工具生成的，布尔值很容易写成 "False" / "1" 这样的字符串。严格按 bool 解析的话
+// 整个文件都会报废，而界面上看到的只是"还没有配置密钥" —— 完全联想不到是类型写错。
+// 这里两种都认，解析失败也只影响这一个字段。
+type flexBool bool
+
+func (b *flexBool) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+	switch strings.ToLower(s) {
+	case "true", "1", "yes", "on":
+		*b = true
+	case "false", "0", "no", "off":
+		*b = false
+	default:
+		return fmt.Errorf("不是布尔值: %q", s)
+	}
+	return nil
+}
+
+type flexFloat float64
+
+func (f *flexFloat) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("不是数字: %q", s)
+	}
+	*f = flexFloat(v)
+	return nil
+}
+
+// normalizeConfigBytes 把配置文件统一成 UTF-8：UTF-8 BOM、UTF-16 LE/BE BOM 都能吃。
+// 起因：PowerShell 5.1 的 Out-File / Set-Content 默认写 UTF-16 LE，生成出来的 config.json
+// 在 Go 这边报 "invalid character '\xff' looking for beginning of value"，
+// 用户看到的是"还没有配置腾讯云密钥"，谁也想不到问题在编码上。
+func normalizeConfigBytes(data []byte) []byte {
+	switch {
+	case bytes.HasPrefix(data, []byte{0xEF, 0xBB, 0xBF}):
+		return data[3:]
+	case bytes.HasPrefix(data, []byte{0xFF, 0xFE}):
+		return utf16BytesToUTF8(data[2:], false)
+	case bytes.HasPrefix(data, []byte{0xFE, 0xFF}):
+		return utf16BytesToUTF8(data[2:], true)
+	}
+	return data
+}
+
+func utf16BytesToUTF8(b []byte, bigEndian bool) []byte {
+	u := make([]uint16, 0, len(b)/2)
+	for i := 0; i+1 < len(b); i += 2 {
+		if bigEndian {
+			u = append(u, uint16(b[i])<<8|uint16(b[i+1]))
+		} else {
+			u = append(u, uint16(b[i+1])<<8|uint16(b[i]))
+		}
+	}
+	return []byte(string(utf16.Decode(u)))
 }
 
 var (
@@ -138,7 +208,7 @@ func applyConfigFile(path string) bool {
 	if err != nil {
 		return false
 	}
-	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}) // 记事本会加 BOM
+	data = normalizeConfigBytes(data) // BOM / UTF-16，见函数注释
 
 	var fc fileConfig
 	if strings.HasSuffix(strings.ToLower(path), ".ini") {
@@ -157,28 +227,28 @@ func applyConfigFile(path string) bool {
 	fillIfEmpty(&cfg.TableAction, fc.Action) // 旧字段名
 
 	if fc.MinConfidence != nil {
-		cfg.MinConfidence = *fc.MinConfidence
+		cfg.MinConfidence = float64(*fc.MinConfidence)
 	}
 	if fc.LineSeparator != nil {
 		cfg.LineSeparator = *fc.LineSeparator
 	}
 	if fc.SortByPosition != nil {
-		cfg.SortByPosition = *fc.SortByPosition
+		cfg.SortByPosition = bool(*fc.SortByPosition)
 	}
 	if fc.StripCellBreaks != nil {
-		cfg.StripCellBreaks = *fc.StripCellBreaks
+		cfg.StripCellBreaks = bool(*fc.StripCellBreaks)
 	}
 	if fc.CellBreakReplacement != nil {
 		cfg.CellBreakReplacement = *fc.CellBreakReplacement
 	}
 	if fc.ShowError != nil {
-		cfg.ShowError = *fc.ShowError
+		cfg.ShowError = bool(*fc.ShowError)
 	}
 	if fc.Toast != nil {
-		cfg.Toast = *fc.Toast
+		cfg.Toast = bool(*fc.Toast)
 	}
 	if fc.Log != nil {
-		cfg.Log = *fc.Log
+		cfg.Log = bool(*fc.Log)
 	}
 	return true
 }
@@ -201,7 +271,7 @@ func parseINIConfig(data []byte) fileConfig {
 			continue
 		}
 		k, v = strings.ToLower(strings.TrimSpace(k)), strings.TrimSpace(v)
-		b := strings.EqualFold(v, "true") || v == "1"
+		b := flexBool(strings.EqualFold(v, "true") || v == "1")
 		switch k {
 		case "secretid":
 			fc.SecretID = v

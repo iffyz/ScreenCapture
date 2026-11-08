@@ -2,7 +2,7 @@
   "secret_id": "",
   "secret_key": "",
   "region": "ap-guangzhou",
-  "text_action": "GeneralBasicOCR",
+  "text_action": "GeneralAccurateOCR",
   "table_action": "RecognizeTableAccurateOCR",
   "min_confidence": 0,
   "line_separator": "\r\n",
