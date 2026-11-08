@@ -15,6 +15,9 @@ namespace
     constexpr float scaleNum{ 5.f }, srcW{ 50.f }, srcH{ 30.f };
     constexpr float pixImgH{ scaleNum * srcH };
     constexpr float pixW{ srcW * scaleNum };
+    // 放大镜下面那两行文字（HEX / RGB）占的高度：padding*(2+1) + fontSize*2，再留一点余量。
+    // 取景框底板的高度和"下方放不下就翻到光标上方"的判断都用它，改行数时只改这一处
+    constexpr float pixTextH{ 42.f };
 }
 
 std::unique_ptr<WinCap> winCap;
@@ -149,7 +152,7 @@ void WinCap::setPixPos(POINT pos)
         pixPos.x = int(pos.x - span - pixW + dpi);
     }
     pixPos.y = int(pos.y + span + dpi);
-    auto pixH{ pixImgH + 76.f * dpi };
+    auto pixH{ pixImgH + pixTextH * dpi };
     if (pixPos.y + pixH > h) {
         pixPos.y = int(pos.y - span - pixH + dpi);
     }
@@ -185,9 +188,8 @@ void WinCap::getPixImg(POINT pos)
 void WinCap::paintPix(ID2D1DeviceContext* ctx)
 {
 	if (isPress || stage != CapStage::Select) return;
-    // 底框只留两行文字的高度：padding*(2+1) + fontSize*2，再加一点余量，
-    // 与下面画的两行（HEX / RGB）对齐
-    D2D1_RECT_F pixRect{ (float)pixPos.x, (float)pixPos.y, pixPos.x + pixW, pixPos.y + pixImgH + 42.f * dpi };
+    // 底框只留两行文字的高度，与下面画的两行（HEX / RGB）对齐
+    D2D1_RECT_F pixRect{ (float)pixPos.x, (float)pixPos.y, pixPos.x + pixW, pixPos.y + pixImgH + pixTextH * dpi };
     ctx->FillRectangle(pixRect, brushBg.Get());
     if (pixSrcRect.right > pixSrcRect.left && pixSrcRect.bottom > pixSrcRect.top) {
         D2D1_RECT_F imgRect{
