@@ -1,7 +1,8 @@
 # Build outputs
+# 注意：不要写裸的 Debug/ —— Windows 上 git 默认忽略大小写，会把 yoga 的
+# ling/yoga/debug（里面有 AssertFatal、Log 两个真实源文件）一起吃掉，
+# 结果本地编得过、云上编不过。中间产物都在 x64/ 下，只忽略这一个就够了。
 x64/
-Debug/
-Release/
 .vs/
 *.obj
 *.pdb
