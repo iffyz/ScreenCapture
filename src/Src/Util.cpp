@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include <wincodec.h>
 #include <shobjidl.h>
+#include <dxgi1_3.h>   // IDXGIDevice3::Trim，见 trimMemory
 #include <format>
 #include <fstream>
 #include "Util.h"
@@ -323,4 +324,22 @@ void Util::log(const std::wstring& msg)
 	DWORD written = 0;
 	WriteFile(h, line.data(), bytes, &written, nullptr);
 	CloseHandle(h);
+}
+
+// 交接点清内存：截图遮罩放掉整屏位图之后、贴图窗口接手的这个时刻。
+// 两件事分开做 ——
+// ① IDXGIDevice3::Trim：让 DXGI 把闲置的分配还给驱动，显存与堆里的碎片一并回收；
+// ② SetProcessWorkingSetSize(-1,-1)：把工作集清空，页面进 standby。
+//    这一步看着像"面子上好看"，其实是为了静态钉图：贴着不动的图不该占着几十兆常驻内存，
+//    真要用的时候缺页回来即可，代价只有第一帧的几十微秒
+void Util::trimMemory()
+{
+	auto d2d = Ling::D2D::get();
+	if (d2d && d2d->d3dDevice) {
+		ComPtr<IDXGIDevice3> dxgiDevice;
+		if (SUCCEEDED(d2d->d3dDevice.As(&dxgiDevice)) && dxgiDevice) {
+			dxgiDevice->Trim();
+		}
+	}
+	SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
 }

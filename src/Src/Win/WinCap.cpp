@@ -464,7 +464,11 @@ void WinCap::onClosed()
         Util::log(std::format(L"cap: 遮罩已关，贴图窗口存在={} -> {}", hasPin, hasPin ? L"继续等待" : L"退出进程"));
         if (!hasPin) {
             Ling::App::get()->quit(0);
+            return;
         }
+        // 遮罩刚刚放掉它那份整屏位图和交换链，而接下来屏幕上多半只剩一张贴图 ——
+        // 这是整个生命周期里最适合把内存还给系统的时刻，晚了就得等到贴图被关掉（进程也没了）
+        Util::trimMemory();
     });
 }
 

@@ -93,14 +93,19 @@ App::App()
     Ling::init();
     auto app = Ling::App::get();
     app->initArgs();
-    // 单实例保护：本程序没有驻留态，截图进行中再双击一次就会叠出第二层遮罩。
-    // 两层看起来一模一样，用户只会觉得"拖了框没反应"（其实框画在下层）。发现已有
-    // 实例就直接退场，让人接着用已经开着的那层。互斥体跟着进程一起释放，不用收尾
-    HANDLE singleInstance = CreateMutexW(nullptr, FALSE, L"Local\\ScreenCapture_SingleInstance");
-    if (singleInstance && GetLastError() == ERROR_ALREADY_EXISTS) {
-        app->quit(0);
-        return;
-    }
+    // 单实例保护 + 互相唤醒。截图进行中再启动一次会叠出第二层遮罩，两层看着一模一样，
+    // 用户只会觉得"拖了框没反应"（框画在下层），所以后到的实例必须退场 —— 但"钉图"是例外：
+    // 贴图窗口摆在桌上时进程本来就活着，这时用户再按一次截图（= 再启动一次 exe）不能没反应。
+    // Ling 的 refuseSecondInstance 正好是这套语义：先到的实例建一个隐藏消息窗口，后到的
+    // FindWindow 找到它、PostMessage 一下再退场，先到的收到 onSecondInstance 事件。
+    // 以前这里用的是互斥体 + 直接 quit，后者没人通知，钉图开着时再截图就彻底哑了
+    app->onSecondInstance.add([]() {
+        // 已经有一张遮罩在等框选了：再建一张就是叠两层，宁可什么都不做
+        if (WinCap::get()) return;
+        Util::log(L"app: 另一个实例要求再截一张");
+        WinCap::init();
+    });
+    if (app->refuseSecondInstance()) return;
     Ling::D2D::addFonts({ L"icon.ttf" });
     Setting::init();
     Lang::init();
