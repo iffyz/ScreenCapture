@@ -46,15 +46,42 @@ go build -trimpath -ldflags "-s -w -H windowsgui" -o ImageReader.exe .
 
 ## 云编译
 
-推到 GitHub 后自动跑 `.github/workflows/build.yml`：
+仓库：<https://github.com/iffyz/ScreenCapture>（fork 自 xland/ScreenCapture）
+
+- `main` 分支 = 本改造版源码，push 后自动跑 `.github/workflows/build.yml`
+- `upstream` 分支 = fork 时原版代码的快照，仅作留底，不参与编译
+
+流程：
 
 1. `microsoft/setup-msbuild@v2` 备好 MSBuild
 2. `build.ps1` 编主程序
 3. `setup-go` + `go test` + `go build` 编插件
 4. 产物打包成 `ScreenCapture-win64-<sha>` artifact
-5. 打 `v*` 标签时额外发 Release
+5. 打 `v*` 标签时额外发 Release（Release 里的 exe 不需要登录就能下）
 
-跑一次约 3~5 分钟，冷启动大头在编 yoga 和 Ling。
+跑一次约 3~4 分钟，冷启动大头在编 yoga 和 Ling。
+
+### 取产物
+
+仓库页 → **Actions** → 点最新一次 `build` → 页面底部 **Artifacts** →
+下载 `ScreenCapture-win64-<sha>.zip`，里面是三个文件：
+
+| 文件 | 说明 |
+|---|---|
+| `ScreenCapture.exe` | 主程序 |
+| `ImageReader.exe` | OCR 插件 |
+| `config.example.json` | 密钥模板，复制成 `config.json` 再填 |
+
+Artifact 默认只保留 90 天，过期就再 push 一个空提交重跑。
+
+### 发一个带下载链接的版本
+
+```bash
+git tag v2.5.15-custom1
+git push origin v2.5.15-custom1
+```
+
+标签触发的那次构建会顺带发 Release，里面的 exe 是直链，给别人或自己换机器都方便。
 
 ## 几个不能改的地方
 
