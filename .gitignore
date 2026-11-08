@@ -1,0 +1,23 @@
+# Build outputs
+x64/
+Debug/
+Release/
+.vs/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.tlog
+*.idb
+*.ipch
+*.aps
+*.user
+*.suo
+build.log
+
+# Plugin build output and local credentials
+plugin/*.exe
+plugin/config.json
+plugin/config.ini
+plugin/*.log

@@ -1,0 +1,16 @@
+# 源码按文本处理，Windows 上检出成 CRLF，避免 VS 工程被整片改造
+* text=auto
+*.vcxproj   text eol=crlf
+*.vcxproj.filters text eol=crlf
+*.slnx      text eol=crlf
+*.rc        text eol=crlf
+*.ps1       text eol=crlf
+*.yml       text eol=lf
+*.go        text eol=lf
+
+# 二进制
+*.ttf       binary
+*.ico       binary
+*.lib       binary
+*.exe       binary
+*.png       binary

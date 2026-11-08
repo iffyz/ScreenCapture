@@ -1,0 +1,15 @@
+{
+  "secret_id": "",
+  "secret_key": "",
+  "region": "ap-guangzhou",
+  "text_action": "GeneralBasicOCR",
+  "table_action": "RecognizeTableAccurateOCR",
+  "min_confidence": 0,
+  "line_separator": "\r\n",
+  "sort_by_position": false,
+  "strip_cell_breaks": true,
+  "cell_break_replacement": "",
+  "show_error": true,
+  "toast": false,
+  "log": true
+}

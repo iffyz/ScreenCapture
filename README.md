@@ -1,0 +1,74 @@
+# ScreenCapture（改造版）可编译源码
+
+基于 [xland/ScreenCapture](https://github.com/xland/ScreenCapture) 2.5.15 与 [xland/Ling](https://github.com/xland/Ling) 的改造版本，
+去掉录屏与二维码，改成「用完即退」，工具条换成表格识别 + 钉图。这里放的是**能直接编译出成品 exe** 的完整源码。
+
+## 目录
+
+```
+build.ps1                一次性把 yoga -> Ling -> ScreenCapture 编完
+src/                     ScreenCapture 源码（含 ScreenCapture.vcxproj）
+ling/                    Ling 框架 + yoga 布局引擎
+plugin/                  Go 写的 OCR 插件（腾讯云通用/表格识别），产出 ImageReader.exe
+.github/workflows/build.yml   GitHub Actions：push 自动出 exe
+```
+
+## 本地编译
+
+前提：Windows 10/11 x64 + **Visual Studio 2022 Build Tools**（勾选「使用 C++ 的桌面开发」，
+含 MSVC v143 与 Windows 10/11 SDK）。
+
+```powershell
+.\build.ps1
+```
+
+脚本自己找 MSBuild（`MSBUILD_EXE_PATH` → vswhere → 常见安装路径 → PATH），
+从脚本所在目录推导所有路径，**整个文件夹随便挪位置都能编**。
+
+产物：
+
+| 文件 | 说明 |
+|---|---|
+| `src\Src\x64\Release\ScreenCapture.exe` | 主程序，`/MT` 静态链接，不需要 VC 运行库 |
+| `plugin\ImageReader.exe` | 需另编，见下 |
+
+## 编译插件
+
+```powershell
+cd plugin
+$env:CGO_ENABLED = "0"
+go build -trimpath -ldflags "-s -w -H windowsgui" -o ImageReader.exe .
+```
+
+插件运行时按顺序找配置：`exe 同目录\config.json` → `%APPDATA%\ScreenCapture\plugin\config.json`。
+把 `config.example.json` 复制成 `config.json` 填上腾讯云密钥即可。**密钥不要提交进仓库。**
+`-H windowsgui` 不能省，否则识别时会闪一个黑框。
+
+## 云编译
+
+推到 GitHub 后自动跑 `.github/workflows/build.yml`：
+
+1. `microsoft/setup-msbuild@v2` 备好 MSBuild
+2. `build.ps1` 编主程序
+3. `setup-go` + `go test` + `go build` 编插件
+4. 产物打包成 `ScreenCapture-win64-<sha>` artifact
+5. 打 `v*` 标签时额外发 Release
+
+跑一次约 3~5 分钟，冷启动大头在编 yoga 和 Ling。
+
+## 几个不能改的地方
+
+- **工具集必须是 v143**。v145 属于 VS2026，只支持 Win11；本仓库三个 `.vcxproj` 都是 v143。
+- **`WindowsTargetPlatformVersion` 保持 `10.0`**，用机器上最新的 SDK，不要钉死小版本。
+- **`src/Src/Res/iconfont.ttf` 是改过的**：往字体里追加了 U+E71F 这个表格识别图标字形。
+  换字体文件会导致工具条少一个图标。
+- **`build.ps1` 只能写 ASCII**。PowerShell 5.1 在文件没有 BOM 时按 ANSI 读，中文注释会把引号吃掉。
+- **`build.ps1` 开头会清掉小写的 `http_proxy` 等变量**：父进程环境块里 `http_proxy` 和 `HTTP_PROXY`
+  同时存在时，MSBuild 构造大小写不敏感字典会直接抛 MSB6001。
+- **Ling 有两处兼容性改动**，不要用上游原版覆盖：
+  `include/Util.h` 里 `COMPILE_TIME_RAND_STR` 的字符表从内层 lambda 局部变量提到了命名空间作用域
+  （v143 会报 C3493）；两个 `.vcxproj` 的 `PlatformToolset` 是 v143。
+
+## 许可
+
+`src/` 与 `ling/` 分别遵循各自目录下的 LICENSE（MIT）。
