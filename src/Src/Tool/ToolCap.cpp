@@ -73,25 +73,38 @@ void ToolCap::onClick(Ling::Button* btn)
 {
 	// 提示框跟着按钮所在的窗口走，这里马上要换阶段或者关窗口，先把它收掉
 	tip->hide();
-	if (btn->id == L"mark") {
+	doAction(btn->id);
+}
+
+// 键盘快捷键（WinCap::onKey 里的数字键 1-4）与鼠标点击走同一条路，
+// 免得以后改按钮行为时两套逻辑慢慢走偏
+void ToolCap::trigger(const std::wstring& id)
+{
+	if (tip) tip->hide();
+	doAction(id);
+}
+
+void ToolCap::doAction(const std::wstring& id)
+{
+	if (id == L"mark") {
 		win->startPin();
 	}
-	else if (btn->id == L"ocr") {
+	else if (id == L"ocr") {
 		win->startOcr();
 	}
-	else if (btn->id == L"table") {
+	else if (id == L"table") {
 		win->startTableOcr();
 	}
-	else if (btn->id == L"pin") {
+	else if (id == L"pin") {
 		win->startPinPure();
 	}
-	else if (btn->id == L"save") {
+	else if (id == L"save") {
 		win->saveToFile();
 	}
-	else if (btn->id == L"clipboard") {
+	else if (id == L"clipboard") {
 		win->copyToClipboard();
 	}
-	else if (btn->id == L"close") {
+	else if (id == L"close") {
 		win->close();
 	}
 }

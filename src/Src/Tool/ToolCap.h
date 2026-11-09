@@ -10,10 +10,14 @@ class ToolCap : public Ling::WinBase
 public:
 	ToolCap(WinCap* win);
 	~ToolCap();
+	// 供快捷键调用：按按钮 id 执行它的动作，与鼠标点一下完全等价
+	void trigger(const std::wstring& id);
 private:
 	void onCreated() override;
 	void onMinMaxInfo(MINMAXINFO* mmi) override;
 	void onClick(Ling::Button* btn);
+	// 按钮动作的唯一出口，鼠标点击与 trigger 都走它
+	void doAction(const std::wstring& id);
 	// 按当前 dpi 把窗口尺寸算出来并应用。构造时算一次，DPI 变了再算一次
 	void refreshSize();
 private:

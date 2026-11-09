@@ -78,16 +78,10 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, bool r
 	// Ling 传进来的是已经换算成滚动距离的 space（一格 = 60 逻辑像素 × dpi），
 	// shape 只关心方向，这里按符号还原成 ±WHEEL_DELTA
 	onMouseWheel.add([this](POINT pos, float space) {
-		// 钉图（工具条收着）时滚轮就是"把这张图放大缩小"。
-		// 这里原来是把滚轮让出去的，理由是"用户可能想滚底下的页面"——但贴图就压在那块屏幕上，
-		// 滚轮透传到底下的窗口反而更莫名其妙；而且钉图没有工具条、没有可编辑的东西，
-		// 滚轮空着不用，等于浪费了唯一一个现成的缩放手势。
-		// 光标在图上滚，图就以光标为锚点放大缩小，位置跟着走（见 applyScale）
-		if (pinnedOnly()) {
-			applyScale(scale * (space > 0 ? 1.1f : 1.f / 1.1f), pos);
-			return;
-		}
-		// Ling 的滚轮事件不带修饰键状态，自己查：按住 Ctrl 是缩放窗口，不是调 shape
+		// 缩放只认 Ctrl+滚轮，钉图和标注模式同一套手势。早先钉图是"裸滚就缩放"，
+		// 同一块图上按不按 Ctrl 是两种结果，从工具条收着的状态切到标注状态时特别容易滚错；
+		// 而裸滚留给"调当前 shape 的参数"（马赛克块大小、线宽之类），两边也就不抢手势了。
+		// Ling 的滚轮事件不带修饰键状态，自己查
 		if (GetKeyState(VK_CONTROL) & 0x8000) {
 			// 一格 10%，按当前倍数等比走，放大和缩小的手感才对称
 			applyScale(scale * (space > 0 ? 1.1f : 1.f / 1.1f), pos);
@@ -364,6 +358,28 @@ void WinPin::onMinMaxInfo(MINMAXINFO* mmi)
 
 void WinPin::onDown(POINT pos, BOOL isRight)
 {
+	// 编辑文本时，落在文本框里的点击整个交给 TextBox（它自己订阅了窗口的鼠标事件）。
+	// 这里不能抢先 SetCapture / 置 isMouseDown，否则拖选文本会被当成拖 shape。
+	const bool editingHere = editingText && textBox && textBox->isPosIn(pos);
+	// 双击判定得自己做，做法同 WinCap::onDown：Ling 的窗口类没带 CS_DBLCLKS，
+	// WM_LBUTTONDBLCLK 根本不会来，只能拿系统的双击间隔和双击判定框自己认。
+	// 与 WinCap 唯一的不同是这里比屏幕坐标而不是客户区坐标：拖动贴图窗口时窗口跟着光标走，
+	// 抓住的那一点始终停在光标下，光标的客户区坐标几乎不变 —— 用客户区坐标会把
+	// "拖一下松手再拖一下"当成双击，图和标注就这么被复制走关掉了。
+	// 而拖动必然意味着光标在屏幕上真的移动过，屏幕坐标能把这种情况分开。
+	// 判定提到钉图分支之前：工具条收着的时候也要认双击，两条路共用同一份时间戳
+	bool isDblClick{ false };
+	if (!isRight && !editingHere) {
+		POINT screenPos{};
+		GetCursorPos(&screenPos);
+		auto now = GetTickCount64();
+		isDblClick = !editingText
+			&& (now - lastDownTime <= GetDoubleClickTime())
+			&& std::abs(screenPos.x - lastDownPos.x) <= GetSystemMetrics(SM_CXDOUBLECLK)
+			&& std::abs(screenPos.y - lastDownPos.y) <= GetSystemMetrics(SM_CYDOUBLECLK);
+		lastDownTime = now;
+		lastDownPos = screenPos;
+	}
 	// 钉图状态（工具条收着）没有可编辑的东西。这里原来做的是"点一下就收走"，
 	// 但贴图和底下的屏幕长得一模一样，用户按下去往往只是想拖一下、或者确认它到底在不在，
 	// 钉图状态（工具条收着）下，左键就是"把这张图挪到别处"：按住拖走，松手即停，
@@ -376,6 +392,12 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 			toolMain->show();
 			return;
 		}
+		// 双击 = 复制并关窗，与标注模式是同一个手势。钉图的图还没标过，
+		// 复制出来的就是原图，等于"这张图我要了，收走"
+		if (isDblClick) {
+			copyToClipboard();
+			return;
+		}
 		pressPos.x = pos.x;
 		pressPos.y = pos.y;
 		isMouseDown = true;
@@ -383,9 +405,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		SetCapture(hwnd);
 		return;
 	}
-	// 编辑文本时，落在文本框里的点击整个交给 TextBox（它自己订阅了窗口的鼠标事件）。
-	// 这里不能抢先 SetCapture / 置 isMouseDown，否则拖选文本会被当成拖 shape。
-	if (editingText && textBox && textBox->isPosIn(pos)) return;
+	if (editingHere) return;
 	if (isRight) {
 		// 右键在"有工具条"和"只剩图"这两个状态之间来回切。
 		// 藏着的时候（上一次右键收起来的）就把它请回来。位置先重排一遍：
@@ -404,25 +424,11 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		toolSub->hideTools();
 		return;
 	}
-	// 双击判定得自己做，做法同 WinCap::onDown：Ling 的窗口类没带 CS_DBLCLKS，
-	// WM_LBUTTONDBLCLK 根本不会来，只能拿系统的双击间隔和双击判定框自己认。
-	// 与 WinCap 唯一的不同是这里比屏幕坐标而不是客户区坐标：拖动贴图窗口时窗口跟着光标走，
-	// 抓住的那一点始终停在光标下，光标的客户区坐标几乎不变 —— 用客户区坐标会把
-	// "拖一下松手再拖一下"当成双击，图和标注就这么被复制走关掉了。
-	// 而拖动必然意味着光标在屏幕上真的移动过，屏幕坐标能把这种情况分开
-	POINT screenPos{};
-	GetCursorPos(&screenPos);
-	auto now = GetTickCount64();
-	bool isDblClick = (now - lastDownTime <= GetDoubleClickTime())
-		&& std::abs(screenPos.x - lastDownPos.x) <= GetSystemMetrics(SM_CXDOUBLECLK)
-		&& std::abs(screenPos.y - lastDownPos.y) <= GetSystemMetrics(SM_CYDOUBLECLK);
-	lastDownTime = now;
-	lastDownPos = screenPos;
 	// 双击 = Ctrl+C：把图连标注一起送进剪切板并关窗，选着画笔也一样（等价于按 Ctrl+C，
 	// 手里拿着什么工具都不该影响这个手势）。要在下面所有分支之前处理：
 	// 这一下既不是画画也不是拖窗，不该留下 capture、更不该新建 shape。
 	// 编辑文字时不算：双击归文本框（选中单词），点在框外才会走到这里
-	if (isDblClick && !editingText) {
+	if (isDblClick) {
 		// 前半段那一下点击是这个手势的一部分，它顺手放下的元素（只有序号是按一下就成形的，
 		// 别的都在抬手时按"没画出东西"清掉了）不该被带进剪切板
 		if (prevPressCreatedShape) history->undo();
@@ -502,6 +508,10 @@ void WinPin::onMove(POINT pos)
 
 void WinPin::onUp(POINT pos, BOOL isRight)
 {
+	// 拖动过就不算"双击的前半段"：把窗口/元素拖走再松手，紧接着又在原处按下，
+	// 光标位置和上一次按下点刚好重合，会被认成双击（图和标注就这么被复制走关掉了）。
+	// 拖动本身说明这一下不是"点一下"，清掉时间戳最省事
+	if (isMouseDown && hasDragged) lastDownTime = 0;
 	// 钉图：这一下只是把图挪了个位置，松手就结束，不弹工具条、也不往下走
 	// （下面的 onUp 会把 ToolMain 显示出来，正是这里要避免的）
 	if (pinnedOnly()) {
@@ -587,7 +597,8 @@ void WinPin::onToolStyleChanged()
 void WinPin::onKey(UINT key)
 {
 	// 钉图模式：空格来回切工具条，ESC 先收工具条、本来就收着就直接关窗。
-	// 其余快捷键（复制/保存/撤销）在工具条没出来时没有对应按钮，一律不响应
+	// 其余快捷键（复制 / 保存 / 撤销）与标注模式完全一致 —— 以前这里把整段都挡住了，
+	// 结果钉在屏幕上那张图反而不能 Ctrl+C / Ctrl+S，同一个窗口两套规则，用起来别扭
 	if (readOnly) {
 		if (key == VK_SPACE) {
 			if (IsWindowVisible(toolMain->hwnd)) {
@@ -612,7 +623,6 @@ void WinPin::onKey(UINT key)
 			close();
 			return;
 		}
-		return;
 	}
 	// 编辑文本时所有按键都归 TextBox：否则 Ctrl+C 复制的是截图、回车会保存并关窗、
 	// Delete 删掉的是整个 shape、ESC 直接把窗口关了。ESC 结束编辑由 TextBox 自己处理。

@@ -272,6 +272,18 @@ void WinCap::onKey(UINT key)
         else pos.x += 1;
         SetCursorPos(pos.x, pos.y); // 后面的 WM_MOUSEMOVE 会让 onMove 跟着刷新
     }
+    // 工具条上的前四个按钮直接给了数字键：1 标注 / 2 文字识别 / 3 表格识别 / 4 钉图，
+    // 省得每次都把光标挪过去点一下。只认主键区的 1-4，小键盘的 VK_NUMPAD1-4 故意不映射；
+    // 而且只在选区已经定下来、工具条确实在的时候管用 —— 还在拖框取色时按数字没有任何意义
+    else if (stage == CapStage::Adjust && toolCap && key >= UINT('1') && key <= UINT('4')) {
+        static const wchar_t* const ids[] = { L"mark", L"ocr", L"table", L"pin" };
+        toolCap->trigger(ids[key - UINT('1')]);
+    }
+    // Ctrl+S = 工具条最右边那个保存按钮。标注阶段本来就有这个键，缺的是"框选完成、
+    // 工具条刚出来、还没点任何按钮"这一段，补上之后从截图到存盘的整条路上都能用
+    else if (stage == CapStage::Adjust && key == 'S' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+        saveToFile();
+    }
     // Enter 与 Ctrl+C 一个意思：把图存进剪切板。比 Ctrl+C 多管一个阶段 ——
     // 选区刚框好（Adjust）时也认，那会儿等于点了 ToolCap 上的复制按钮
     else if (key == VK_RETURN) {
