@@ -13,6 +13,43 @@ plugin/                  Go 写的 OCR 插件（腾讯云通用/表格识别）�
 .github/workflows/build.yml   GitHub Actions：push 自动出 exe
 ```
 
+## 定制改动清单
+
+基线是上游 `xland/ScreenCapture` 的 2.5.15（`5e4713e`）。这一节回答「哪些地方是本仓库自己改的」——
+日后 `git fetch upstream` 看上游更新、决定要不要 cherry-pick 时，先对照这张表。
+
+| 提交 | 改动 | 为什么 / 备注 |
+|---|---|---|
+| `c1b2975` | 建立可编译源码仓库与 GitHub Actions 三段式云编译；主程序改成「用完即退」，删录屏与二维码，工具条换成表格识别 + 钉图；往图标字体追加 `U+E71F` 表格字形 | 初始改造基线。同时给 Ling 打了两处兼容性补丁，见「几个不能改的地方」 |
+| `bf5d1ce` | 修 `.gitignore` 里裸的 `Debug/` 规则，补回 `ling/yoga/debug/` 四个源文件 | Windows 下大小写不敏感，误把 yoga 的 debug 源文件排除掉了 |
+| `21c53af` | README 补仓库地址、留底分支说明与取产物步骤 | 文档 |
+| `6833964` | 修「钉图后无法再截图」：改用 Ling 的 `refuseSecondInstance()` + `onSecondInstance`；新增 `Util::trimMemory()` | 原来的单实例互斥体直接 `quit(0)`；钉图常驻内存由 91 MB 降到约 12 MB |
+| `d647259` | OCR 默认改 `GeneralAccurateOCR`；`config.go` 加编码归一化与布尔/数字容错，补 4 个用例 | 用户手写的 `config.json` 是 UTF-16 LE 且布尔写成字符串，原解析器直接报「没配置密钥」 |
+| `856519e` | 整块删除长截图（8 个文件、约 627 行），取色面板只留 HEX 与 RGB | 长截图不好用，顺带去掉 CMYK 与坐标。exe 只小约 2%，因为 `/OPT:REF` 本来就会丢弃未引用代码 |
+| `95b0738` | 取色面板高度提成常量 `pixTextH` | 面板改成两行后，翻面判断仍按旧高度算 |
+| `b28c0ea` | 工具条数字键 `1`–`4` 与 `Ctrl+S`；钉图放行 `Ctrl+C` / `Ctrl+S` / `Enter` 与双击；缩放统一为 `Ctrl+滚轮`；6 份语言包补提示文案 | 只认主键区数字，不映射小键盘。`ToolCap` 抽出 `doAction(id)` 让鼠标与键盘共用一个出口 |
+
+### 与上游的关系
+
+- `origin` = 本仓库 `iffyz/ScreenCapture`；`upstream` **remote** = 原作者 `xland/ScreenCapture`。
+- `origin/upstream` **分支**只是 fork 时原版代码的留底快照，不参与编译，也不是跟踪分支；名字容易与上面的 remote 混淆。
+- **不要 merge 上游**：本版已删长截图、裁掉多个命令行参数、换 OCR 默认值、改图标字体，冲突面很大。
+  正确做法是 `git fetch upstream` → 看 `git log` / `git diff` → 只挑需要的 `git cherry-pick`。
+
+### 不在仓库里的改动（部署层）
+
+| 项 | 现状 |
+|---|---|
+| `ImageReader.exe` / `TableOCR.exe` | 已换成 CI 产物（5,113,344 B），两者是同一个硬链接；CI 带 `-s -w` 去符号，所以比旧版本地编译的小 |
+| `config.json` | UTF-16 LE + BOM、紧凑单行，是主程序 `Setting::save()` 写出来的。别手工改成 UTF-8，下次保存会被覆盖回去 |
+| 本机编译环境 | VS 2022 生成工具与 SDK 已卸载，编译只走 GitHub Actions |
+| 实际部署 | `D:\PortableAPP\ScreenCapture\`，主程序对应 `b28c0ea` |
+
+### 版本锚点
+
+`custom-2026-11-09` 标记本次收尾状态，用于精确回滚和与上游做 diff 基线。
+CI 的 `tags: ["v*"]` 只匹配 `v` 开头，这个标签不会触发发版构建；需要带下载链接的 Release 时另打 `v*` 标签。
+
 ## 本地编译
 
 前提：Windows 10/11 x64 + **Visual Studio 2022 Build Tools**（勾选「使用 C++ 的桌面开发」，
@@ -49,7 +86,7 @@ go build -trimpath -ldflags "-s -w -H windowsgui" -o ImageReader.exe .
 仓库：<https://github.com/iffyz/ScreenCapture>（fork 自 xland/ScreenCapture）
 
 - `main` 分支 = 本改造版源码，push 后自动跑 `.github/workflows/build.yml`
-- `upstream` 分支 = fork 时原版代码的快照，仅作留底，不参与编译
+- `origin/upstream` **分支** = fork 时原版代码的快照，仅作留底，不参与编译（不是跟踪分支；另有一个名为 `upstream` 的 remote 指向原作者仓库，见「定制改动清单」）
 
 流程：
 
