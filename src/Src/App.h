@@ -12,7 +12,9 @@ class App
 		// 表现为读取访问权限冲突
 		static void dispose();
 		static App* get();
-		void takeScreenShot(int x, int y, int w, int h,ID2D1Bitmap1** img);
+		// 抓一整块虚拟桌面到 D2D 位图。失败（驱动重置、选区超出位图上限、显存不足）返回 false
+		// 且 *img 保持为空 —— 以前是 void，失败了你只会拿到一张全黑图或者直接崩
+		bool takeScreenShot(int x, int y, int w, int h, ID2D1Bitmap1** img);
 		std::tuple<int, int, int, int> getScreenArea();
 		// 把窗口从屏幕捕获里摘出去：它在屏幕上照常显示、照常能点，但录屏和抓屏都拿不到它。
 		// 录屏工具条压在录制区内部时（全屏录制必然如此）靠这个才不会被录进去。

@@ -2,16 +2,16 @@
 #include <include/Ling.h>
 #include "Setting.h"
 #include "Util.h"
-#include "Lang.h"
-#include "Win/WinCap.h"
 #include "App.h"
 
 namespace {
     std::unique_ptr<Setting> setting;
-    constexpr int capShortcutMsgId{ 100 };
     // 配置文件的默认内容。空文件、坏 JSON、缺键都拿它兜底，所以这里列出的每一项
-    // 都是代码里会直接按名字取的（见 getLang / getAutoStart / initShortcutKeys）
-    constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A"}})""" };
+    // 都是代码里会直接按名字取的（见 getLang / getToolObj）
+    // 老的 autoStart / shortcutKey 两项已经删掉：前者随开机自启一起废了，后者在热键注册
+    // 去掉之后没人读。用户那份 config.json 里残留的键不必清理，读的时候都是按名字取，
+    // 多出来的键不影响任何逻辑，硬删反而会让用户丢掉"以后可能还想用"的值
+    constexpr std::wstring_view defaultConfig{ LR"""({"common":{"language":"zh-CN"}})""" };
 }
 
 
@@ -30,6 +30,10 @@ Setting::Setting() :dataPath{ initDataPath() }, configPath{ initConfigPath() }
             return;
         }
         MessageBox(nullptr, L"config.json parse error，use default config", L"ScreenCapture", MB_OK | MB_ICONWARNING);
+        // 解析失败还硬用默认配置继续跑，下一次任何 set（比如调一下标注工具的滑块）
+        // 都会把这份坏文件整份覆盖掉 —— 里面可能只是少了个逗号，密钥还在。先留一份副本，
+        // 出问题时用户还能手工把密钥捞回来。副本已存在就不覆盖，免得把最早那份好的冲掉
+        CopyFileW(configPath.wstring().data(), (configPath.wstring() + L".bad").data(), TRUE);
     }
     configObj = JsonObject::Parse(defaultConfig); 
 }
@@ -67,67 +71,6 @@ const JsonObject Setting::getConfigObj()
     return configObj;
 }
 
-void Setting::setShortcutKey(const std::wstring& type, const std::vector<std::wstring>& keys)
-{
-    std::wstring str;
-    for (size_t i = 0; i < keys.size(); i++)
-    {
-        str += L"+" + keys[i];
-    }
-    str.erase(0,1);
-    auto shortcutKey = configObj.GetNamedObject(L"shortcutKey");
-    shortcutKey.SetNamedValue(type, JsonValue::CreateStringValue(str));
-    auto app = Ling::App::get();
-    app->unRegHotKey(capShortcutMsgId);
-    app->regHotKey(str, capShortcutMsgId);
-    save();
-}
-
-std::wstring Setting::getShortcutKey(const std::wstring& type)
-{
-    // 一路用带默认值的重载：启动时 ensureDefaults 已经补齐过，这里只是别让运行期
-    // 意外（配置被外部改动、问了个没配过的 type）变成一次崩溃
-    auto obj = configObj.GetNamedObject(L"shortcutKey", nullptr);
-    if (!obj) return L"";
-    return std::wstring{ obj.GetNamedString(type, L"") };
-}
-
-void Setting::setAutoStart(bool autoStart)
-{
-    std::wstring runKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-    if (autoStart) {
-        wchar_t buffer[MAX_PATH];
-        GetModuleFileName(nullptr, buffer, MAX_PATH);
-        auto curPath = std::filesystem::path(buffer);
-        std::wstring commandLine = std::format(L"\"{}\" --auto-start", curPath.wstring());
-        HKEY hKey;
-        if (RegOpenKeyEx(HKEY_CURRENT_USER, runKey.data(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegSetValueEx(hKey, L"ScreenCapture", 0, REG_SZ, (const BYTE*)commandLine.data(), (commandLine.size() + 1) * sizeof(wchar_t));
-            RegCloseKey(hKey);
-        }
-    }
-    else {
-        HKEY hKey;
-        if (RegOpenKeyEx(HKEY_CURRENT_USER, runKey.data(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegDeleteValue(hKey, L"ScreenCapture");
-            RegCloseKey(hKey);
-        }
-    }
-    auto common = configObj.GetNamedObject(L"common", nullptr);
-    if (!common) {
-        common = JsonObject();
-        configObj.SetNamedValue(L"common", common);
-    }
-    common.SetNamedValue(L"autoStart", JsonValue::CreateBooleanValue(autoStart));
-    save();
-}
-
-bool Setting::getAutoStart()
-{
-    auto common = configObj.GetNamedObject(L"common", nullptr);
-    return common && common.GetNamedBoolean(L"autoStart", false);
-}
-
 std::filesystem::path Setting::initDataPath()
 {
     PWSTR pathTmp;
@@ -163,7 +106,38 @@ std::filesystem::path Setting::initConfigPath()
 void Setting::save()
 {
     std::wstring str{ configObj.Stringify() };
-    Ling::Util::saveFile(configPath.wstring(), str);
+    // 原子写：配置文件里存着 OCR 的密钥，而原来那条路是"直接覆盖目标文件"。写到一半掉电、
+    // 被任务管理器结束、或者盘满了，留下的就是半个 JSON；下次启动解析失败会换成默认配置，
+    // 再存一次就把密钥彻底冲掉。改成先写同目录的 .tmp，落盘之后用 ReplaceFileW 整份替换：
+    // 要么是旧的完整内容，要么是新的完整内容，不存在中间态。
+    // ReplaceFileW 顺带把被替换掉的那份留成 .bak，等于每次保存都自动备份"上一份可用的配置"
+    auto target = configPath.wstring();
+    auto tmpPath = target + L".tmp";
+    auto bakPath = target + L".bak";
+
+    // 编码必须与 Ling::Util::saveFile 一致：UTF-16 LE + BOM。读侧（C++ 与 Go 插件）
+    // 靠 BOM 判断编码，写成无 BOM 的会被当成 UTF-8 认，中文语言名就乱了
+    HANDLE hFile = CreateFileW(tmpPath.data(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WORD bom = 0xFEFF;
+    bool ok = WriteFile(hFile, &bom, sizeof(bom), &written, nullptr)
+        && WriteFile(hFile, str.data(), static_cast<DWORD>(str.size() * sizeof(wchar_t)), &written, nullptr);
+    // 先刷到盘再替换：不然 ReplaceFileW 换上去的可能只是一个还在系统缓存里的空壳
+    if (ok) ok = FlushFileBuffers(hFile) != FALSE;
+    CloseHandle(hFile);
+    if (!ok) {
+        DeleteFileW(tmpPath.data());
+        return;
+    }
+
+    if (!ReplaceFileW(target.data(), tmpPath.data(), bakPath.data(), REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
+        // 目标文件还不存在（第一次保存）时 ReplaceFileW 会失败，退回普通改名。
+        // 此时没有旧文件可备份，也就没有 .bak，属于预期内的情况
+        if (!MoveFileExW(tmpPath.data(), target.data(), MOVEFILE_REPLACE_EXISTING)) {
+            DeleteFileW(tmpPath.data());
+        }
+    }
 }
 
 std::wstring Setting::getLang()
@@ -171,18 +145,6 @@ std::wstring Setting::getLang()
     auto common = configObj.GetNamedObject(L"common", nullptr);
     if (!common) return L"zh-CN";
     return std::wstring{ common.GetNamedString(L"language", L"zh-CN") };
-}
-
-void Setting::setLang(const std::wstring& langCode)
-{
-    auto common = setting->configObj.GetNamedObject(L"common", nullptr);
-    if (!common) {
-        common = JsonObject();
-        setting->configObj.SetNamedValue(L"common", common);
-    }
-    common.SetNamedValue(L"language", JsonValue::CreateStringValue(langCode));
-    setting->save();
-	Lang::get()->initLang(langCode);
 }
 
 JsonObject Setting::getToolObj(const std::wstring& tool)
@@ -222,38 +184,4 @@ void Setting::setToolNum(const std::wstring& tool, const std::wstring& key, floa
 {
     getToolObj(tool).SetNamedValue(key, JsonValue::CreateNumberValue(val));
     save();
-}
-
-long long Setting::getUpdateCheckDay()
-{
-    auto common = configObj.GetNamedObject(L"common", nullptr);
-    if (!common) return 0;
-    return static_cast<long long>(common.GetNamedNumber(L"updateCheckDay", 0));
-}
-
-void Setting::setUpdateCheckDay(long long day)
-{
-    auto common = configObj.GetNamedObject(L"common", nullptr);
-    if (!common) return;
-    // 这项不写进 defaultConfig：它是程序自己的记账，不是给用户改的配置
-    common.SetNamedValue(L"updateCheckDay", JsonValue::CreateNumberValue(static_cast<double>(day)));
-    save();
-}
-
-void Setting::initShortcutKeys()
-{
-    auto lingApp = Ling::App::get();
-    // 取不到就用默认的那个组合：热键注册不上顶多是快捷键不好用，不该让程序起不来
-    std::wstring capStr{ getShortcutKey(L"cap") };
-    if (capStr.empty()) capStr = L"Ctrl+Alt+A";
-    lingApp->regHotKey(capStr, capShortcutMsgId);
-
-    lingApp->onHotKey.add([this](UINT msg) {
-        if (msg == capShortcutMsgId) {
-            WinCap::init();
-        }
-    });
-    lingApp->onSecondInstance.add([this]() {
-        WinCap::init();
-    });
 }

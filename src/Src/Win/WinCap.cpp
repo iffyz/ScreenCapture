@@ -74,8 +74,17 @@ void WinCap::dispose()
 
 void WinCap::onCreated()
 {
-    App::get()->takeScreenShot(x, y, w, h, &screenImg);
-	auto d2d = Ling::D2D::get();
+    if (!App::get()->takeScreenShot(x, y, w, h, &screenImg)) {
+        // 截不到底图，这个窗口就只剩一层纯黑遮罩，拖框也看不出框住了什么。与其让用户
+        // 对着黑屏瞎拖，不如说清楚然后退场。注意不能在这儿直接 close()：
+        // createNativeWindow 里 onCreated 之后还要 layout()，窗口没了就是对着野句柄画，
+        // 所以丢进消息队列，等这一轮建窗流程走完再关
+        Util::log(L"cap: 截屏失败，关窗退场");
+        MessageBox(hwnd, Lang::get(L"cap.fail").data(), L"ScreenCapture", MB_OK | MB_ICONERROR);
+        PostMessage(hwnd, WM_CLOSE, 0, 0);
+        return;
+    }
+    auto d2d = Ling::D2D::get();
     // 画布铺满窗口，走 swap chain（双缓冲）后端，避免调整选区时整帧闪烁
     canvas = body->makeChild<Ling::Canvas>();
     canvas->enableSwapChain();
@@ -98,9 +107,13 @@ void WinCap::layout()
     auto ctx = canvas->startPaint();
     if (!ctx) return;
     ctx->Clear(0);
-    D2D1_RECT_F destRect = D2D1::RectF(0, 0, (float)w, (float)h);
-    ctx->DrawBitmap(screenImg.Get(), destRect);
-    cutMask->paint(ctx);
+    // 底图可能因为截屏失败而不存在（见 onCreated 的失败分支），这时就只画蒙版，
+    // 至少别对着空位图解引用
+    if (screenImg) {
+        D2D1_RECT_F destRect = D2D1::RectF(0, 0, (float)w, (float)h);
+        ctx->DrawBitmap(screenImg.Get(), destRect);
+    }
+    if (cutMask) cutMask->paint(ctx);
     paintPix(ctx);
     canvas->finishPaint();
 }
@@ -160,7 +173,7 @@ void WinCap::setPixPos(POINT pos)
 
 void WinCap::getPixImg(POINT pos)
 {
-    if (isPress || stage != CapStage::Select) return;
+    if (!screenImg || isPress || stage != CapStage::Select) return;
     const long sw = static_cast<long>(srcW), sh = static_cast<long>(srcH);
     const long iw = static_cast<long>(w), ih = static_cast<long>(h);
     // 期望的源矩形：以光标为正中心，可以越出屏幕。
@@ -220,19 +233,37 @@ void WinCap::paintPix(ID2D1DeviceContext* ctx)
     ReleaseDC(NULL, hScreen);
     auto d2d = Ling::D2D::get();
     float padding{ 7.f * dpi },fontSize{ 10.f*dpi };
-    Microsoft::WRL::ComPtr<IDWriteTextLayout> textLayout;
     // 只画 HEX 与 RGB 两行。CMYK 与光标坐标（POS）去掉了：
     // 取色的时候用不上，多出来的两行还把取景框撑得很高
-    const std::wstring lines[] = {
-        std::format(L"HEX (Ctrl+H) : #{:02X}{:02X}{:02X}", GetRValue(cr), GetGValue(cr), GetBValue(cr)),
-        std::format(L"RGB (Ctrl+R) : {},{},{}", GetRValue(cr), GetGValue(cr), GetBValue(cr)),
-    };
+    // 布局只在"颜色或字号变了"时重建：这两行文字的全部内容就是当前像素的颜色，
+    // 拖动时鼠标每秒能来上百个消息，每帧两次文本整形 + 两次堆分配纯属白烧
+    if (!pixLayoutValid || pixLayoutColor != cr || pixLayoutFontSize != fontSize) {
+        const std::wstring lines[] = {
+            std::format(L"HEX (Ctrl+H) : #{:02X}{:02X}{:02X}", GetRValue(cr), GetGValue(cr), GetBValue(cr)),
+            std::format(L"RGB (Ctrl+R) : {},{},{}", GetRValue(cr), GetGValue(cr), GetBValue(cr)),
+        };
+        bool ok = true;
+        for (size_t i = 0; i < 2; i++)
+        {
+            auto& str = lines[i];
+            // 传 &ComPtr 会先释放上一次的对象（WRL 的 operator& 就是 ReleaseAndGetAddressOf），
+            // 所以不会泄漏；但返回值必须查 —— 建失败时下面 SetFontSize / DrawTextLayout
+            // 拿到的就是空指针，那是一次必崩的访问冲突
+            auto hr = d2d->dwriteFactory->CreateTextLayout(str.data(), (UINT32)str.length(),
+                d2d->baseTextFormat.Get(), FLT_MAX, FLT_MAX, pixLayout[i].ReleaseAndGetAddressOf());
+            if (FAILED(hr) || !pixLayout[i]) { ok = false; break; }
+            pixLayout[i]->SetFontSize(fontSize, { 0, INT_MAX });
+        }
+        pixLayoutValid = ok;
+        pixLayoutColor = cr;
+        pixLayoutFontSize = fontSize;
+    }
+    // 布局建不出来就只留取景框和十字线，别为了两行提示把整个截图流程崩掉
+    if (!pixLayoutValid) return;
     for (size_t i = 0; i < 2; i++)
     {
-        auto& str = lines[i];
-        d2d->dwriteFactory->CreateTextLayout(str.data(), (UINT32)str.length(), d2d->baseTextFormat.Get(), FLT_MAX, FLT_MAX, &textLayout);
-        textLayout->SetFontSize(fontSize, { 0,INT_MAX });
-        ctx->DrawTextLayout({ pixPos.x + padding, pixPos.y + pixImgH + padding*(i+1) + fontSize*i }, textLayout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        ctx->DrawTextLayout({ pixPos.x + padding, pixPos.y + pixImgH + padding*(i+1) + fontSize*i },
+            pixLayout[i].Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 }
 

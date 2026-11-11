@@ -287,8 +287,13 @@ bool Util::openWithImageReader(const int w, const int h, BYTE* data, bool table)
 	STARTUPINFO si{ .cb = sizeof(STARTUPINFO) };
 	PROCESS_INFORMATION pi{};
 	if (!CreateProcess(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, workDir.data(), &si, &pi)) {
+		auto err = GetLastError();
 		std::error_code ec;
 		std::filesystem::remove(imgPath, ec); //插件没起来，别留下垃圾文件
+		// 以前这里只是静静 return false：界面上什么都不会发生，用户只会觉得"点了没反应"。
+		// 插件被杀软删了、被隔离、或者目录没解压完整时就是这个景象
+		log(std::format(L"ocr: CreateProcess 失败 err={} exe={}", err, exePath.wstring()));
+		MessageBox(nullptr, Lang::get(L"util.pluginFail").data(), L"ScreenCapture", MB_OK | MB_ICONWARNING);
 		return false;
 	}
 	CloseHandle(pi.hThread);
@@ -305,6 +310,15 @@ void Util::log(const std::wstring& msg)
 	auto n = GetTempPathW(MAX_PATH, dir);
 	if (n == 0 || n >= MAX_PATH) return;
 	std::wstring path = std::wstring(dir, n) + L"ScreenCapture.log";
+	// 轮转：这份日志只在排查时看，但只追加不清理迟早会攒到几百兆（一个进程一天就跑几次，
+	// 每次都写"启动/建遮罩"两颗）。超过 1 MB 就把当前这份挪成 .1，只留一代 ——
+	// 排查要看的是"最近一次"，历史留太多反而难找
+	constexpr ULONGLONG maxLogBytes{ 1024ull * 1024ull };
+	WIN32_FILE_ATTRIBUTE_DATA fad{};
+	if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)
+		&& (static_cast<ULONGLONG>(fad.nFileSizeHigh) << 32 | fad.nFileSizeLow) > maxLogBytes) {
+		MoveFileExW(path.c_str(), (path + L".1").c_str(), MOVEFILE_REPLACE_EXISTING);
+	}
 	SYSTEMTIME st{};
 	GetLocalTime(&st);
 	auto line = std::format(L"[{:02}:{:02}:{:02}.{:03}] pid={} {}\r\n",

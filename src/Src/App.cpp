@@ -3,6 +3,8 @@
 #include "Setting.h"
 #include "Lang.h"
 #include "Util.h"
+#include <format>
+#include <cstdint>
 #include "./Win/WinCap.h"
 #include "./Win/WinPin.h"
 
@@ -35,32 +37,66 @@ App* App::get()
     return app.get();
 }
 
-void App::takeScreenShot(int x, int y, int w, int h, ID2D1Bitmap1** img)
+bool App::takeScreenShot(int x, int y, int w, int h, ID2D1Bitmap1** img)
 {
-    HDC hScreen = GetDC(NULL);
+    if (w <= 0 || h <= 0 || !img) return false;
+    *img = nullptr;
+    // w*4*h 一定用 size_t：三台 4K 竖屏拼起来的虚拟桌面就有两亿像素，int 乘出来是负数，
+    // std::vector 收到一个负的 length_error 会直接把进程带走
+    const size_t rowBytes = static_cast<size_t>(w) * 4;
+    const size_t imgBytes = rowBytes * static_cast<size_t>(h);
+
+    HDC hScreen = GetDC(nullptr);
+    if (!hScreen) return false;
     HDC hDC = CreateCompatibleDC(hScreen);
-    HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, w, h);
+    // CreateCompatibleBitmap 会失败：显卡驱动刚重置过、或选区大于驱动允许的单张位图上限。
+    // 以前四个返回值一个都不查，后面 SelectObject/GetDIBits 拿到的是 NULL，
+    // 结果要么是一张全黑图（用户以为截到了），要么是访问冲突
+    HBITMAP hBitmap = hDC ? CreateCompatibleBitmap(hScreen, w, h) : nullptr;
+    if (!hDC || !hBitmap) {
+        Util::log(std::format(L"cap: 建位图失败 dc={:#x} bmp={:#x}", (uintptr_t)hDC, (uintptr_t)hBitmap));
+        if (hBitmap) DeleteObject(hBitmap);
+        if (hDC) DeleteDC(hDC);
+        ReleaseDC(nullptr, hScreen);
+        return false;
+    }
+
     auto oldObj = SelectObject(hDC, hBitmap);
-    BOOL bRet = BitBlt(hDC, 0, 0, w, h, hScreen, x, y, SRCCOPY);
-    ReleaseDC(NULL, hScreen);
-    std::vector<BYTE> data(w * 4 * h);
+    std::vector<BYTE> data(imgBytes);
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h;
+    bmi.bmiHeader.biHeight = -h;          // 负 = top-down，与 D2D 的行序一致
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
-    GetDIBits(hDC, hBitmap, 0, h, data.data(), &bmi, DIB_RGB_COLORS);
+    // CAPTUREBLT：把分层窗口（ToolTip、部分悬浮窗、老式透明窗口）也画进位图。
+    // 少了它这些窗口在截图里是缺席的 —— 背景直接透过来，看着像"那块没截到"
+    BOOL bRet = BitBlt(hDC, 0, 0, w, h, hScreen, x, y, SRCCOPY | CAPTUREBLT);
+    // GetDIBits 返回实际拷贝的扫描行数，0 就是失败；只查 BOOL 是不够的
+    int lines = GetDIBits(hDC, hBitmap, 0, static_cast<UINT>(h), data.data(), &bmi, DIB_RGB_COLORS);
     SelectObject(hDC, oldObj);
     DeleteDC(hDC);
     DeleteObject(hBitmap);
+    ReleaseDC(nullptr, hScreen);
+    if (!bRet || lines != h) {
+        Util::log(std::format(L"cap: BitBlt={} GetDIBits={} ({}x{})", (int)bRet, lines, w, h));
+        return false;
+    }
+
     D2D1_BITMAP_PROPERTIES1 props = {
        .pixelFormat{D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)},
        .dpiX{96.0f}, .dpiY{96.0f}, .bitmapOptions{D2D1_BITMAP_OPTIONS_NONE}
     };
     auto d2d = Ling::D2D::get();
-    auto hr = d2d->deviceContext->CreateBitmap(D2D1::SizeU(w, h), data.data(), w * 4, props, img);
+    if (!d2d || !d2d->deviceContext) return false;
+    auto hr = d2d->deviceContext->CreateBitmap(D2D1::SizeU(w, h), data.data(), static_cast<UINT32>(rowBytes), props, img);
+    if (FAILED(hr)) {
+        Util::log(std::format(L"cap: CreateBitmap 失败 hr=0x{:08X}", (unsigned)hr));
+        *img = nullptr;
+        return false;
+    }
+    return true;
 }
 
 std::tuple<int, int, int, int> App::getScreenArea()

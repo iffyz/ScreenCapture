@@ -78,5 +78,13 @@ private:
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushBg;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushText;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> crossBrush;
+	// 放大镜下面那两行 HEX / RGB 的文字布局。颜色不变时内容也不变，每帧重建 CreateTextLayout
+	// 纯属白扔（每帧两次文本整形 + 两次堆分配），缓存住、只在取到的颜色变了时重建。
+	// 顺带把"布局建失败"这件事显式记下来，别拿空 ComPtr 去解引用
+	Microsoft::WRL::ComPtr<IDWriteTextLayout> pixLayout[2];
+	DWORD pixLayoutColor{ 0 };
+	// 字号也进缓存键：DPI 变了字号就变，光比颜色会在换屏缩放之后继续用旧尺寸的布局
+	float pixLayoutFontSize{ 0.f };
+	bool pixLayoutValid{ false };
 };
 
