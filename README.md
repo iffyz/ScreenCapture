@@ -28,6 +28,7 @@ plugin/                  Go 写的 OCR 插件（腾讯云通用/表格识别）�
 | `856519e` | 整块删除长截图（8 个文件、约 627 行），取色面板只留 HEX 与 RGB | 长截图不好用，顺带去掉 CMYK 与坐标。exe 只小约 2%，因为 `/OPT:REF` 本来就会丢弃未引用代码 |
 | `95b0738` | 取色面板高度提成常量 `pixTextH` | 面板改成两行后，翻面判断仍按旧高度算 |
 | `b28c0ea` | 工具条数字键 `1`–`4` 与 `Ctrl+S`；钉图放行 `Ctrl+C` / `Ctrl+S` / `Enter` 与双击；缩放统一为 `Ctrl+滚轮`；6 份语言包补提示文案 | 只认主键区数字，不映射小键盘。`ToolCap` 抽出 `doAction(id)` 让鼠标与键盘共用一个出口 |
+| `d3695db` | `Setting::save` 改原子写（`.tmp` → `ReplaceFileW`，保留 `.bak`，解析失败另存 `.bad`）；截屏链路补齐返回值检查、`size_t` 溢出修复、`CAPTUREBLT`；删掉设置页留下的死代码（热键注册、开机自启、语言写入、更新检查）与语言包 `about`/`long`/`update` 三段；日志 1 MB 轮转；x64 升 `Level4` | 配置里存着 OCR 密钥，覆盖写一旦中断就等于丢密钥。`initShortcutKeys` 本来就没被调用过 —— 本程序不驻留，热键这条路早已废弃 |
 
 ### 与上游的关系
 
@@ -40,10 +41,10 @@ plugin/                  Go 写的 OCR 插件（腾讯云通用/表格识别）�
 
 | 项 | 现状 |
 |---|---|
-| `ImageReader.exe` / `TableOCR.exe` | 已换成 CI 产物（5,113,344 B），两者是同一个硬链接；CI 带 `-s -w` 去符号，所以比旧版本地编译的小 |
-| `config.json` | UTF-16 LE + BOM、紧凑单行，是主程序 `Setting::save()` 写出来的。别手工改成 UTF-8，下次保存会被覆盖回去 |
+| `ImageReader.exe` | 已换成 CI 产物（5,113,344 B），CI 带 `-s -w` 去符号，所以比旧版本地编译的小。文字/表格是同一个 exe（靠 `--mode=table` 区分），早期那个 `TableOCR.exe` 硬链接别名已删除，换插件只需替换这一个文件 |
+| `config.json` | UTF-16 LE + BOM、紧凑单行，是主程序 `Setting::save()` 写出来的。别手工改成 UTF-8，下次保存会被覆盖回去。保存走「`.tmp` → `ReplaceFileW`」，所以目录里会多出 `config.json.bak`（上一份可用配置）；JSON 解析失败时还会留一份 `config.json.bad` |
 | 本机编译环境 | VS 2022 生成工具与 SDK 已卸载，编译只走 GitHub Actions |
-| 实际部署 | `D:\PortableAPP\ScreenCapture\`，主程序对应 `b28c0ea` |
+| 实际部署 | `D:\PortableAPP\ScreenCapture\`，主程序目录里留一份 `config.json` 副本 |
 
 ### 版本锚点
 
@@ -119,6 +120,19 @@ git push origin v2.5.15-custom1
 ```
 
 标签触发的那次构建会顺带发 Release，里面的 exe 是直链，给别人或自己换机器都方便。
+
+## 启动方式
+
+本程序**不驻留、不注册全局热键、没有托盘也没有设置页**（这三样都在改造里删掉了，`d3695db` 把剩下的死代码也清了）：
+
+- 什么时候截图 = 什么时候启动这个 exe。钉在任务栏、放桌面，或者用任何第三方热键工具
+  （AutoHotkey / Quicker / PowerToys 之类）绑一个组合键去启动它，都可以。
+  程序自己不再占用 `Ctrl+Alt+A` 这类公共组合，也就不会再和 QQ、微信抢热键。
+- 正在截图、或者桌面上还钉着图的时候，再启动一次不会叠出第二层遮罩：后到的实例会
+  通知先到的那个"再截一张"，然后自己退场。
+- 命令行 `--enter=pin|ocr|table`（另有未文档化的 `pinonly`）可以在框完选区后直接进对应动作，
+  不出工具条；参数写错则静默降级为普通框选。
+- `--auto-start` 只是给旧版本写进注册表的开机自启项留的兜底：收到就直接退场。
 
 ## 快捷键
 
