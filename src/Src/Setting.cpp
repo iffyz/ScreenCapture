@@ -81,13 +81,11 @@ std::filesystem::path Setting::initDataPath()
     }
     auto dataPath = std::filesystem::path{ pathTmp };
     CoTaskMemFree(pathTmp);
-    dataPath.append("ScreenCapture");
-    if (!std::filesystem::exists(dataPath)) {
-        if (!std::filesystem::create_directories(dataPath)) {
-            _ASSERT_EXPR(FALSE, L"create data path，error");
-        }
-    }
-    return dataPath;
+    // 只拼路径，不建目录。原来这里是"拼完就 create_directories"，结果绿色版
+    // （exe 旁边已经有 config.json）一启动也会在 %appdata% 下留一个空的
+    // ScreenCapture 文件夹 —— 用户看着就像"还想往 C 盘塞东西"。目录改由
+    // initConfigPath 在真要落到 appdata 的那一刻才建
+    return dataPath.append("ScreenCapture");
 }
 
 std::filesystem::path Setting::initConfigPath()
@@ -100,6 +98,11 @@ std::filesystem::path Setting::initConfigPath()
     auto path = std::filesystem::path{ buffer }.parent_path().append(L"config.json");
     if (std::filesystem::exists(path)) return path;
     auto fallback = this->dataPath; //复制一份路径对象，append 会就地改
+    if (fallback.empty()) return {};
+    // 只有确定要走 appdata 这条路时才建目录（老版本的配置就在这里）。
+    // 绿色版在上面就 return 了，从此不会为它凭空造文件夹
+    std::error_code ec;
+    std::filesystem::create_directories(fallback, ec);
     return fallback.append(L"config.json");
 }
 
@@ -112,6 +115,9 @@ void Setting::save()
     // 要么是旧的完整内容，要么是新的完整内容，不存在中间态。
     // ReplaceFileW 顺带把被替换掉的那份留成 .bak，等于每次保存都自动备份"上一份可用的配置"
     auto target = configPath.wstring();
+    // 取不到 roaming 路径时 configPath 是空的，这时 target 会变成相对路径 ".tmp"，
+    // 落到"当前工作目录"里 —— 那可能是任何地方。什么都不写才是对的
+    if (target.empty()) return;
     auto tmpPath = target + L".tmp";
     auto bakPath = target + L".bak";
 

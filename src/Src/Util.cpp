@@ -276,7 +276,15 @@ bool Util::openWithImageReader(const int w, const int h, BYTE* data, bool table)
 		ShellExecute(nullptr, L"open", L"https://github.com/xland/ImageReader/releases", nullptr, nullptr, SW_SHOWNORMAL);
 		return false;
 	}
-	auto imgPath = Setting::get()->getDataPath().append(L"ocr_" + createFileName(L"png")).wstring();
+	// 临时图放 %TEMP%，不再放 %appdata%\ScreenCapture。后者是"配置目录"，
+	// 绿色版下程序根本不建它（见 Setting::initDataPath），放这儿会写失败；
+	// 而且这张图插件读完就删，本来也不该出现在用户的数据目录里
+	auto imgPath = [&] {
+		wchar_t dir[MAX_PATH]{};
+		auto n = GetTempPathW(MAX_PATH, dir);
+		auto base = (n > 0 && n < MAX_PATH) ? std::filesystem::path{ std::wstring(dir, n) } : std::filesystem::temp_directory_path();
+		return base.append(L"ocr_" + createFileName(L"png")).wstring();
+	}();
 	if (!saveToFile(imgPath, w, h, data)) return false;
 	// --del-image=true：插件读完自己把缓存图删掉，免得在数据目录里越攒越多
 	auto cmd = table
