@@ -29,6 +29,7 @@ plugin/                  Go 写的 OCR 插件（腾讯云通用/表格识别）�
 | `95b0738` | 取色面板高度提成常量 `pixTextH` | 面板改成两行后，翻面判断仍按旧高度算 |
 | `b28c0ea` | 工具条数字键 `1`–`4` 与 `Ctrl+S`；钉图放行 `Ctrl+C` / `Ctrl+S` / `Enter` 与双击；缩放统一为 `Ctrl+滚轮`；6 份语言包补提示文案 | 只认主键区数字，不映射小键盘。`ToolCap` 抽出 `doAction(id)` 让鼠标与键盘共用一个出口 |
 | `d3695db` | `Setting::save` 改原子写（`.tmp` → `ReplaceFileW`，保留 `.bak`，解析失败另存 `.bad`）；截屏链路补齐返回值检查、`size_t` 溢出修复、`CAPTUREBLT`；删掉设置页留下的死代码（热键注册、开机自启、语言写入、更新检查）与语言包 `about`/`long`/`update` 三段；日志 1 MB 轮转；x64 升 `Level4` | 配置里存着 OCR 密钥，覆盖写一旦中断就等于丢密钥。`initShortcutKeys` 本来就没被调用过 —— 本程序不驻留，热键这条路早已废弃 |
+| `4c9b118` | `initDataPath` 不再建目录，改由 `initConfigPath` 在真要回落到 appdata 时才 `create_directories`；`save()` 对空 `configPath` 直接返回；OCR 临时图从 `%appdata%\ScreenCapture` 改到 `%TEMP%` | 原来绿色版（exe 旁已有 `config.json`）启动也会在 `%appdata%` 下留一个空文件夹。临时图的路径同步挪走，否则不建目录后 OCR 写图会失败 |
 
 ### 与上游的关系
 
@@ -43,6 +44,7 @@ plugin/                  Go 写的 OCR 插件（腾讯云通用/表格识别）�
 |---|---|
 | `ImageReader.exe` | 已换成 CI 产物（5,113,344 B），CI 带 `-s -w` 去符号，所以比旧版本地编译的小。文字/表格是同一个 exe（靠 `--mode=table` 区分），早期那个 `TableOCR.exe` 硬链接别名已删除，换插件只需替换这一个文件 |
 | `config.json` | UTF-16 LE + BOM、紧凑单行，是主程序 `Setting::save()` 写出来的。别手工改成 UTF-8，下次保存会被覆盖回去。保存走「`.tmp` → `ReplaceFileW`」，所以目录里会多出 `config.json.bak`（上一份可用配置）；JSON 解析失败时还会留一份 `config.json.bad` |
+| 便携（绿色）行为 | exe 同目录有 `config.json` 就用它，配置跟着程序走；这种情况下**不会**在 `%APPDATA%` 下创建任何东西（`4c9b118` 之前会留一个空文件夹）。同目录没有 `config.json` 才回落到 `%APPDATA%\ScreenCapture\config.json`，且只在那一步才建目录。OCR 的临时截图现在放 `%TEMP%`，插件读完自行删除 |
 | 本机编译环境 | VS 2022 生成工具与 SDK 已卸载，编译只走 GitHub Actions |
 | 实际部署 | `D:\PortableAPP\ScreenCapture\`，主程序目录里留一份 `config.json` 副本 |
 
@@ -81,6 +83,12 @@ go build -trimpath -ldflags "-s -w -H windowsgui" -o ImageReader.exe .
 插件运行时按顺序找配置：`exe 同目录\config.json` → `%APPDATA%\ScreenCapture\plugin\config.json`。
 把 `config.example.json` 复制成 `config.json` 填上腾讯云密钥即可。**密钥不要提交进仓库。**
 `-H windowsgui` 不能省，否则识别时会闪一个黑框。
+
+几个参数的来历：`-s -w` 去符号表与 DWARF、`-trimpath` 抹掉本机绝对路径、`CGO_ENABLED=0`
+出纯静态单文件，这几项从 `c1b2975` 起就在 CI 里了，5.1 MB 已经是「只用标准库 + `net/http`」
+的稳态体积（`crypto/tls` 占了差不多一半），再想明显变小只能上 UPX 之类的压缩壳，
+那会拖慢启动、还容易被杀软启发式误判，不划算。真要加也只值得补一个 `-buildvcs=false`
+（省掉嵌进二进制的 VCS 戳，几十字节到几百字节，纯粹为可复现构建）。
 
 ## 云编译
 
