@@ -41,7 +41,7 @@ private:
 	void getPixImg(POINT pos);
 	void paintPix(ID2D1DeviceContext* ctx);
 	void onKey(UINT key);
-	// Enter 用：把选区里的像素存进剪切板，效果与 Ctrl+C 一致。
+	// Enter / Ctrl+C 用：把选区里的像素存进剪切板并关窗，效果与在窗口里双击一致。
 	// 还在拖框取色（Select）时手上什么都没有，什么也不做
 	void copyCurrentStage();
 	void onDown(POINT pos, bool isRight);

@@ -315,9 +315,13 @@ void WinCap::onKey(UINT key)
     else if (stage == CapStage::Adjust && key == 'S' && (GetKeyState(VK_CONTROL) & 0x8000)) {
         saveToFile();
     }
-    // Enter 与 Ctrl+C 一个意思：把图存进剪切板。比 Ctrl+C 多管一个阶段 ——
-    // 选区刚框好（Adjust）时也认，那会儿等于点了 ToolCap 上的复制按钮
+    // Enter 与 Ctrl+C 一个意思：把图存进剪切板。两个键都只认选区已定下来的阶段 ——
+    // 选区刚框好（Adjust）时按，等于点了 ToolCap 上的复制按钮，也就是在窗口里双击那一下：
+    // 复制成功后自己关窗，与 Ctrl+H/R 以及双击的表现完全一致
     else if (key == VK_RETURN) {
+        copyCurrentStage();
+    }
+    else if (key == 'C' && (GetKeyState(VK_CONTROL) & 0x8000)) {
         copyCurrentStage();
     }
 }
