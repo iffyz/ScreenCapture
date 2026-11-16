@@ -30,6 +30,7 @@ plugin/                  Go 写的 OCR 插件（腾讯云通用/表格识别）�
 | `b28c0ea` | 工具条数字键 `1`–`4` 与 `Ctrl+S`；钉图放行 `Ctrl+C` / `Ctrl+S` / `Enter` 与双击；缩放统一为 `Ctrl+滚轮`；6 份语言包补提示文案 | 只认主键区数字，不映射小键盘。`ToolCap` 抽出 `doAction(id)` 让鼠标与键盘共用一个出口 |
 | `d3695db` | `Setting::save` 改原子写（`.tmp` → `ReplaceFileW`，保留 `.bak`，解析失败另存 `.bad`）；截屏链路补齐返回值检查、`size_t` 溢出修复、`CAPTUREBLT`；删掉设置页留下的死代码（热键注册、开机自启、语言写入、更新检查）与语言包 `about`/`long`/`update` 三段；日志 1 MB 轮转；x64 升 `Level4` | 配置里存着 OCR 密钥，覆盖写一旦中断就等于丢密钥。`initShortcutKeys` 本来就没被调用过 —— 本程序不驻留，热键这条路早已废弃 |
 | `4c9b118` | `initDataPath` 不再建目录，改由 `initConfigPath` 在真要回落到 appdata 时才 `create_directories`；`save()` 对空 `configPath` 直接返回；OCR 临时图从 `%appdata%\ScreenCapture` 改到 `%TEMP%` | 原来绿色版（exe 旁已有 `config.json`）启动也会在 `%appdata%` 下留一个空文件夹。临时图的路径同步挪走，否则不建目录后 OCR 写图会失败 |
+| `dcd3315` | 框选完成、工具条出现时补 `Ctrl+C`：与 `Enter` / 双击同一条路（`copyCurrentStage` → `copyToClipboard` → `close`） | 之前这一段只有 `Enter` 认复制，`Ctrl+C` 得先点进工具条或干脆双击，手按到 `Ctrl+C` 什么都不发生 |
 
 ### 与上游的关系
 
@@ -150,7 +151,7 @@ git push origin v2.5.15-custom1
 |---|---|
 | `1` `2` `3` `4` | 标注 / 文字识别 / 表格识别 / 钉图，等于点工具条前四个按钮 |
 | `Ctrl+S` | 另存为 PNG |
-| `Enter` | 复制到剪切板并关闭 |
+| `Ctrl+C` / `Enter` | 复制到剪切板并关闭（等于在窗口里双击） |
 | `ESC` | 放弃并关闭 |
 
 只认主键区的数字，小键盘的 `1`–`4` 不映射。
