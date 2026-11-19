@@ -59,6 +59,11 @@ void WinCap::init()
     auto ptr = new WinCap();
     winCap.reset(ptr);
 	ptr->cutMask = std::make_unique<CutMask>(ptr);
+    // 先抓屏、再建窗：开始菜单这类"失去焦点即关闭"的瞬态系统 UI，一旦截图窗口
+    // （WS_EX_TOPMOST 铺满全屏）弹出来抢走焦点，它就会自己收起。把 takeScreenShot
+    // 提前到 createNativeWindow 之前，此刻开始菜单还好好开着，才能被 BitBlt 抓进底图。
+    // 抓屏依赖的 Ling::D2D 已在 App::App() 的 Ling::init() 里就绪，这里能安全调用。
+    ptr->takeScreenShotBeforeShow();
     ptr->createNativeWindow(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WS_POPUP);//WS_EX_TOPMOST
 }
 
@@ -74,11 +79,12 @@ void WinCap::dispose()
 
 void WinCap::onCreated()
 {
-    if (!App::get()->takeScreenShot(x, y, w, h, &screenImg)) {
-        // 截不到底图，这个窗口就只剩一层纯黑遮罩，拖框也看不出框住了什么。与其让用户
-        // 对着黑屏瞎拖，不如说清楚然后退场。注意不能在这儿直接 close()：
-        // createNativeWindow 里 onCreated 之后还要 layout()，窗口没了就是对着野句柄画，
-        // 所以丢进消息队列，等这一轮建窗流程走完再关
+    // 底图已经在 init() 里、建窗之前抓好了（为的是开始菜单还没被抢焦点关掉时先截下来）。
+    // 这里不再抓屏，只确认它到位：抓屏失败时 screenImg 为空，窗口只剩一层纯黑遮罩，
+    // 拖框也看不出框住了什么。与其让用户对着黑屏瞎拖，不如说清楚然后退场。
+    // 注意不能在这儿直接 close()：createNativeWindow 里 onCreated 之后还要 layout()，
+    // 窗口没了就是对着野句柄画，所以丢进消息队列，等这一轮建窗流程走完再关
+    if (!screenImg) {
         Util::log(L"cap: 截屏失败，关窗退场");
         MessageBox(hwnd, Lang::get(L"cap.fail").data(), L"ScreenCapture", MB_OK | MB_ICONERROR);
         PostMessage(hwnd, WM_CLOSE, 0, 0);
@@ -98,6 +104,14 @@ void WinCap::onCreated()
     getPixImg(pos);
     setPixPos(pos);
     show();
+}
+
+// 建窗之前抓屏。与 onCreated 里原先的那次抓屏是同一件事，只是提前了时机：
+// 必须在 createNativeWindow 之前调用，这样开始菜单等"失去焦点即关闭"的瞬态系统 UI
+// 还没被截图窗口挤走，能一起截进底图。失败时 screenImg 保持为空，由 onCreated 兜底报错。
+void WinCap::takeScreenShotBeforeShow()
+{
+    App::get()->takeScreenShot(x, y, w, h, &screenImg);
 }
 
 void WinCap::layout()

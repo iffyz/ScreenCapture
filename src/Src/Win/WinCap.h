@@ -37,6 +37,8 @@ private:
 	void layout() override;
 	BOOL setCursor() override;
 	LRESULT onHitTest(const POINT pos) override;
+	// 建窗之前抓屏（开始菜单等瞬态系统 UI 尚未被抢焦点关掉时截下底图）
+	void takeScreenShotBeforeShow();
 	void setPixPos(POINT pos);
 	void getPixImg(POINT pos);
 	void paintPix(ID2D1DeviceContext* ctx);

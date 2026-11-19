@@ -96,9 +96,12 @@ void Util::saveToClipboard(const int w, const int h, BYTE* data)
 	bv5->bV5BitCount = 32;
 	bv5->bV5Compression = BI_BITFIELDS;   // 让接收端识别 alpha
 	bv5->bV5SizeImage = imgBytes;
-	bv5->bV5RedMask = 0x00FF0000;
+	// 像素是 BGRA（encodePng 用 GUID_WICPixelFormat32bppBGRA，getCutPixels 也按 BGRA 出），
+	// 掩码必须按字节序对应：B 在高字节、R 在低字节。以前写成 B=0xFF / R=0xFF0000，
+	// 红蓝通道对调，个别只认 CF_DIBV5 的软件粘贴出来会红蓝颠倒
+	bv5->bV5BlueMask = 0x00FF0000;
 	bv5->bV5GreenMask = 0x0000FF00;
-	bv5->bV5BlueMask = 0x000000FF;
+	bv5->bV5RedMask = 0x000000FF;
 	bv5->bV5AlphaMask = 0xFF000000;
 	bv5->bV5CSType = LCS_sRGB;
 	bv5->bV5Intent = LCS_GM_GRAPHICS;
